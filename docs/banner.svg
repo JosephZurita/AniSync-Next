@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">AniSync Next</title>
+  <desc id="description">Shoko outbound watch-state synchronization for AniList and MyAnimeList.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0d14"/>
+      <stop offset="1" stop-color="#24304b"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c6cff"/>
+      <stop offset="1" stop-color="#27c8ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="360" rx="28" fill="url(#background)"/>
+  <circle cx="170" cy="180" r="92" fill="url(#mark)"/>
+  <path d="M126 225 170 120l45 105h-27l-9-24h-39l-9 24zm23-48h21l-10-29z" fill="white"/>
+  <text x="300" y="175" fill="#f4f7ff" font-family="Inter,Segoe UI,sans-serif" font-size="72" font-weight="750">AniSync Next</text>
+  <text x="304" y="230" fill="#9cabc5" font-family="Inter,Segoe UI,sans-serif" font-size="28">Shoko → AniList · MyAnimeList</text>
+</svg>

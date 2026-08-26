@@ -1,0 +1,217 @@
+name: Build AniSync Next
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DEVELOPMENT_BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build:
+    name: Build, test, and validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate release metadata
+        id: metadata
+        shell: bash
+        run: |
+          if ! [[ "$DEVELOPMENT_BUILD_NUMBER" =~ ^[0-9]+$ ]] || (( DEVELOPMENT_BUILD_NUMBER < 1 || DEVELOPMENT_BUILD_NUMBER > 65534 )); then
+            echo "GITHUB_RUN_NUMBER '$DEVELOPMENT_BUILD_NUMBER' is outside the CLR AssemblyVersion revision range 1-65534." >&2
+            exit 1
+          fi
+          abstraction_version=$(sed -n 's/.*PackageReference Include="Shoko.Abstractions" Version="\([^"]*\)".*/\1/p' src/AniSync.Next/AniSync.Next.csproj)
+          if [[ ! "$abstraction_version" =~ ^6\.0\.0-[0-9A-Za-z.-]+$ ]]; then
+            echo "AniSync Next must pin an exact Shoko.Abstractions 6.0.0 prerelease; found '$abstraction_version'." >&2
+            exit 1
+          fi
+          version="0.1.0-dev.${DEVELOPMENT_BUILD_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=dev-${DEVELOPMENT_BUILD_NUMBER}-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "abstraction_version=$abstraction_version" >> "$GITHUB_OUTPUT"
+          echo "archive_timestamp=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify frontend
+        working-directory: client
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Install browser smoke-test runtime
+        working-directory: client
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        working-directory: client
+        run: pnpm test:browser
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.x"
+
+      - name: Restore .NET dependencies
+        run: dotnet restore AniSync.Next.slnx -p:DevelopmentBuildNumber=${DEVELOPMENT_BUILD_NUMBER}
+
+      - name: Test .NET and collect coverage
+        run: >-
+          dotnet test AniSync.Next.slnx
+          --configuration Release
+          --no-restore
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults
+          -p:DevelopmentBuildNumber=${DEVELOPMENT_BUILD_NUMBER}
+          -p:InformationalVersion="${{ steps.metadata.outputs.version }}+${GITHUB_SHA}"
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Enforce application coverage
+        shell: bash
+        run: python3 scripts/check_coverage.py "$(find TestResults -name coverage.cobertura.xml -print -quit)"
+
+      - name: Plugin registration smoke test
+        run: dotnet test tests/AniSync.Next.Tests/AniSync.Next.Tests.csproj --configuration Release --no-build --filter FullyQualifiedName~EmbeddedPluginIdentityMatchesLockedPackageContract
+
+      - name: Build and validate package assets
+        shell: bash
+        run: |
+          dotnet tools/AniSync.Next.ReleaseTool/bin/Release/net10.0/AniSync.Next.ReleaseTool.dll pack \
+            --dll src/AniSync.Next/bin/Release/net10.0/AniSync.Next.dll \
+            --output release \
+            --run-number "$DEVELOPMENT_BUILD_NUMBER" \
+            --commit "$GITHUB_SHA" \
+            --abstractions-version "${{ steps.metadata.outputs.abstraction_version }}" \
+            --timestamp "${{ steps.metadata.outputs.archive_timestamp }}"
+
+      - name: Upload validated assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: AniSync.Next-${{ github.sha }}-${{ github.run_number }}
+          path: |
+            release/AniSync.Next.dll
+            release/AniSync.Next.dll.sha256
+            release/AniSync.Next-${{ steps.metadata.outputs.version }}.zip
+            release/AniSync.Next-${{ steps.metadata.outputs.version }}.zip.sha256
+            tools/AniSync.Next.ReleaseTool/bin/Release/net10.0/AniSync.Next.ReleaseTool.dll
+            tools/AniSync.Next.ReleaseTool/bin/Release/net10.0/AniSync.Next.ReleaseTool.deps.json
+            tools/AniSync.Next.ReleaseTool/bin/Release/net10.0/AniSync.Next.ReleaseTool.runtimeconfig.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-development-release:
+    name: Publish Dev package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.x"
+
+      - name: Download validated assets
+        uses: actions/download-artifact@v8
+        with:
+          name: AniSync.Next-${{ github.sha }}-${{ github.run_number }}
+          path: artifact
+
+      - name: Generate and validate manifest
+        shell: bash
+        run: |
+          abstraction_version=$(sed -n 's/.*PackageReference Include="Shoko.Abstractions" Version="\([^"]*\)".*/\1/p' src/AniSync.Next/AniSync.Next.csproj)
+          version="0.1.0-dev.${DEVELOPMENT_BUILD_NUMBER}"
+          tag="dev-${DEVELOPMENT_BUILD_NUMBER}-${GITHUB_SHA:0:7}"
+          zip_path="artifact/release/AniSync.Next-${version}.zip"
+          if git ls-remote --exit-code --heads origin manifest >/dev/null 2>&1; then
+            git fetch --depth=1 origin manifest
+            git worktree add --detach manifest-worktree FETCH_HEAD
+            existing=(--existing manifest-worktree/manifest.json)
+          else
+            git worktree add --detach manifest-worktree
+            git -C manifest-worktree switch --orphan manifest
+            existing=()
+          fi
+          released_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          dotnet artifact/tools/AniSync.Next.ReleaseTool/bin/Release/net10.0/AniSync.Next.ReleaseTool.dll manifest \
+            --dll artifact/release/AniSync.Next.dll \
+            --zip "$zip_path" \
+            --output manifest-worktree/manifest.json \
+            --run-number "$DEVELOPMENT_BUILD_NUMBER" \
+            --commit "$GITHUB_SHA" \
+            --abstractions-version "$abstraction_version" \
+            --tag "$tag" \
+            --released-at "$released_at" \
+            "${existing[@]}"
+          python3 -m json.tool manifest-worktree/manifest.json >/dev/null
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "SHOKO_ABSTRACTIONS_VERSION=$abstraction_version" >> "$GITHUB_ENV"
+          echo "ZIP_PATH=$zip_path" >> "$GITHUB_ENV"
+
+      - name: Create or update development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          assets=(artifact/release/AniSync.Next.dll artifact/release/AniSync.Next.dll.sha256 "$ZIP_PATH" "${ZIP_PATH}.sha256")
+          notes="Automated AniSync Next ${VERSION} build for Shoko.Abstractions ${SHOKO_ABSTRACTIONS_VERSION}, built and tested from ${GITHUB_SHA}."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --title "AniSync Next ${VERSION}" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --target "$GITHUB_SHA" --prerelease --title "AniSync Next ${VERSION}" --notes "$notes"
+          fi
+
+      - name: Publish manifest branch
+        shell: bash
+        run: |
+          git -C manifest-worktree config user.name "github-actions[bot]"
+          git -C manifest-worktree config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C manifest-worktree add manifest.json
+          if git -C manifest-worktree diff --cached --quiet; then
+            echo "manifest.json is already current for ${VERSION}."
+            exit 0
+          fi
+          git -C manifest-worktree commit -m "chore: update package manifest for ${VERSION} [skip ci]"
+          git -C manifest-worktree push origin HEAD:manifest

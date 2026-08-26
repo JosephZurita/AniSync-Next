@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AniSync.Next/AniSync.Next.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AniSync.Next.Tests/AniSync.Next.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/AniSync.Next.ReleaseTool/AniSync.Next.ReleaseTool.csproj" />
+  </Folder>
+</Solution>

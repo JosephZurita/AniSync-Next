@@ -45,7 +45,8 @@ internal sealed class SyncCoordinator(
                     providerLists[provider.Key].TryGetValue(mapping.MediaId, out destination);
                 var token = SyncPlanner.CreateSnapshotToken(source, destination);
                 var change = planner.Plan(source, provider.Key, mapping?.MediaId, destination, token,
-                    clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with { GroupId = groupId };
+                    clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with
+                { GroupId = groupId };
                 if (change.Kind != ChangeKind.NoChange)
                     reviews.Add(new ReviewItem(change.Id, change, clock.UtcNow));
             }
@@ -116,7 +117,8 @@ internal sealed class SyncCoordinator(
                     : await provider.GetEntryAsync(username, mapping.MediaId, cancellationToken);
                 var token = SyncPlanner.CreateSnapshotToken(source, destination);
                 var change = planner.Plan(source, provider.Key, mapping?.MediaId, destination, token,
-                    clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with { GroupId = groupId };
+                    clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with
+                { GroupId = groupId };
                 if (change.Kind != ChangeKind.NoChange)
                     await executor.ExecuteAsync(change, confirmedReview: false, cancellationToken);
             }

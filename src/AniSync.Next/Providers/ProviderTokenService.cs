@@ -127,7 +127,17 @@ internal sealed class ProviderTokenService(
         if (!response.IsSuccessStatusCode)
         {
             var message = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new ProviderException($"{provider} token request failed ({(int)response.StatusCode}): {Truncate(message)}", false);
+            var isTransient = response.StatusCode is HttpStatusCode.TooManyRequests ||
+                (int)response.StatusCode >= (int)HttpStatusCode.InternalServerError;
+            var retryAfter = response.Headers.RetryAfter?.Delta;
+            if (retryAfter is null && response.Headers.RetryAfter?.Date is { } retryAt)
+                retryAfter = retryAt - DateTimeOffset.UtcNow;
+            if (retryAfter < TimeSpan.Zero)
+                retryAfter = TimeSpan.Zero;
+            throw new ProviderException(
+                $"{provider} token request failed ({(int)response.StatusCode}): {Truncate(message)}",
+                isTransient,
+                retryAfter);
         }
         return await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: cancellationToken)
             ?? throw new ProviderException($"{provider} returned an empty token response.", false);

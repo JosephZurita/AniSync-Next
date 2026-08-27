@@ -49,7 +49,7 @@ internal sealed class JsonPluginStateStore : IPluginStateStore
             }
             catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException)
             {
-                var backupPath = _statePath + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+                var backupPath = _statePath + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
                 File.Copy(_statePath, backupPath, overwrite: false);
                 _logger.LogError(ex, "AniSync Next state is corrupt; backed it up to {BackupPath} and started with empty state", backupPath);
                 _state = new PluginStateDocument();

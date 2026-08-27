@@ -29,6 +29,57 @@ public sealed class ProviderTokenServiceTests
         configuration.GetAuthorization("alice", ProviderKey.AniList)!.RefreshToken.Should().Be("keep-me");
     }
 
+    [Fact]
+    public async Task TokenRateLimitIsTransientAndPreservesRetryAfter()
+    {
+        var configuration = new FakeConfiguration();
+        configuration.SaveAuthorization("alice", ProviderKey.AniList, new ProviderAuthorization
+        {
+            AccessToken = "expired",
+            RefreshToken = "refresh",
+            ExpiresAt = DateTimeOffset.MinValue,
+        });
+        var handler = new ResponseHandler(() =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+            {
+                Content = new StringContent("slow down"),
+            };
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(9));
+            return response;
+        });
+        var service = new ProviderTokenService(new Factory(handler), configuration, TimeProvider.System);
+
+        var action = () => service.ForceRefreshAsync("alice", ProviderKey.AniList, default);
+
+        var exception = await action.Should().ThrowAsync<AniSync.Next.Application.ProviderException>();
+        exception.Which.IsTransient.Should().BeTrue();
+        exception.Which.RetryAfter.Should().Be(TimeSpan.FromSeconds(9));
+    }
+
+    [Fact]
+    public async Task InvalidTokenRequestRemainsPermanent()
+    {
+        var configuration = new FakeConfiguration();
+        configuration.SaveAuthorization("alice", ProviderKey.AniList, new ProviderAuthorization
+        {
+            AccessToken = "expired",
+            RefreshToken = "refresh",
+            ExpiresAt = DateTimeOffset.MinValue,
+        });
+        var handler = new ResponseHandler(() => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("invalid grant"),
+        });
+        var service = new ProviderTokenService(new Factory(handler), configuration, TimeProvider.System);
+
+        var action = () => service.ForceRefreshAsync("alice", ProviderKey.AniList, default);
+
+        var exception = await action.Should().ThrowAsync<AniSync.Next.Application.ProviderException>();
+        exception.Which.IsTransient.Should().BeFalse();
+        exception.Which.RetryAfter.Should().BeNull();
+    }
+
     private sealed class Factory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, false);
@@ -38,6 +89,12 @@ public sealed class ProviderTokenServiceTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+    }
+
+    private sealed class ResponseHandler(Func<HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(responseFactory());
     }
 }
 

@@ -1,11 +1,16 @@
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
+
 namespace AniSync.Next.Domain;
 
+[JsonConverter(typeof(StringEnumConverter))]
 public enum ProviderKey
 {
     MyAnimeList,
     AniList,
 }
 
+[JsonConverter(typeof(StringEnumConverter))]
 public enum CanonicalListStatus
 {
     Planning,
@@ -15,6 +20,7 @@ public enum CanonicalListStatus
     Dropped,
 }
 
+[JsonConverter(typeof(StringEnumConverter))]
 public enum ChangeKind
 {
     Add,
@@ -26,6 +32,7 @@ public enum ChangeKind
     UnresolvedMapping,
 }
 
+[JsonConverter(typeof(StringEnumConverter))]
 public enum ReviewReason
 {
     None,
@@ -36,6 +43,7 @@ public enum ReviewReason
     ManualRetry,
 }
 
+[JsonConverter(typeof(StringEnumConverter))]
 public enum SyncOutcomeKind
 {
     Applied,
@@ -44,4 +52,3 @@ public enum SyncOutcomeKind
     TransientFailure,
     PermanentFailure,
 }
-

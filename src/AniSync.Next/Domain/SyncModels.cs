@@ -1,5 +1,9 @@
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
+
 namespace AniSync.Next.Domain;
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record ShokoSeriesState(
     string ShokoUsername,
     int SeriesId,
@@ -17,6 +21,7 @@ public sealed record ShokoSeriesState(
             : CanonicalListStatus.Watching;
 }
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record ProviderListState(
     ProviderKey Provider,
     int MediaId,
@@ -27,6 +32,7 @@ public sealed record ProviderListState(
     int? RatingRaw,
     bool Exists = true);
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record PlannedChange(
     Guid Id,
     string ShokoUsername,
@@ -52,6 +58,7 @@ public sealed record PlannedChange(
     public bool IsActionable => Kind is not ChangeKind.NoChange and not ChangeKind.UnresolvedMapping;
 }
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record ReviewItem(
     Guid Id,
     PlannedChange Change,
@@ -59,6 +66,7 @@ public sealed record ReviewItem(
     string? Error = null,
     int AttemptCount = 0);
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record SyncOutcome(
     SyncOutcomeKind Kind,
     PlannedChange Change,
@@ -66,6 +74,7 @@ public sealed record SyncOutcome(
     DateTimeOffset? CompletedAt = null,
     Guid? GroupId = null);
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record ProviderMediaSearchResult(
     ProviderKey Provider,
     int MediaId,
@@ -74,6 +83,7 @@ public sealed record ProviderMediaSearchResult(
     int? StartYear,
     string? ImageUrl);
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record ProviderMapping(
     string ShokoUsername,
     int AniDbAnimeId,

@@ -1,4 +1,6 @@
 using AniSync.Next.Domain;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 
 namespace AniSync.Next.Persistence;
 
@@ -11,6 +13,7 @@ internal sealed class PluginStateDocument
     public List<PersistedSyncTrigger> PendingWork { get; set; } = [];
 }
 
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record PersistedSyncTrigger(
     Guid Id,
     string ShokoUsername,

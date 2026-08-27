@@ -24,6 +24,21 @@ public sealed class ProviderAdapterTests
     }
 
     [Fact]
+    public async Task MyAnimeListReadsAnExistingListEntryDirectly()
+    {
+        var handler = new QueuedJsonHandler(
+            "{\"id\":55888,\"title\":\"Mushoku Tensei II: Isekai Ittara Honki Dasu Part 2\",\"num_episodes\":12,\"my_list_status\":{\"status\":\"completed\",\"score\":0,\"num_episodes_watched\":12}}");
+        var provider = new MyAnimeListProvider(Transport(handler));
+
+        var entry = await provider.GetEntryAsync("alice", 55888, default);
+
+        entry.Should().NotBeNull();
+        entry!.MediaId.Should().Be(55888);
+        entry.Progress.Should().Be(12);
+        entry.Status.Should().Be(CanonicalListStatus.Completed);
+    }
+
+    [Fact]
     public async Task MyAnimeListConvertsCanonicalRatingToNearestTenPointScore()
     {
         var handler = new QueuedJsonHandler("{\"status\":\"watching\",\"score\":8,\"num_episodes_watched\":5}");

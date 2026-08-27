@@ -42,6 +42,46 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshVerifiesAnApparentlyMissingProviderEntryBeforeOfferingAnAddition()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(12));
+        var provider = new FakeProvider(ProviderState(12) with
+        {
+            Provider = ProviderKey.MyAnimeList,
+            Status = CanonicalListStatus.Completed,
+        })
+        {
+            OmitFromList = true,
+        };
+        var setup = Create(directory.Path, source, provider);
+
+        var preview = await setup.Coordinator.RefreshAsync("alice", default);
+
+        preview.Items.Should().BeEmpty("the per-title provider state confirms the entry is already complete");
+        provider.EntryRequests.Should().Be(1);
+        (await setup.Store.GetForUserAsync("alice", default)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RefreshKeepsAnAdditionWhenDirectVerificationConfirmsTheEntryIsAbsent()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(12));
+        var provider = new FakeProvider(ProviderState(0) with { Provider = ProviderKey.MyAnimeList })
+        {
+            OmitFromList = true,
+            EntryExists = false,
+        };
+        var setup = Create(directory.Path, source, provider);
+
+        var preview = await setup.Coordinator.RefreshAsync("alice", default);
+
+        preview.Items.Should().ContainSingle().Which.Change.Kind.Should().Be(ChangeKind.Complete);
+        provider.EntryRequests.Should().Be(1);
+    }
+
+    [Fact]
     public async Task ApplyRejectsPreviewWhenShokoStateChangedAfterRefresh()
     {
         using var directory = new TestDirectory();
@@ -202,12 +242,21 @@ public sealed class SyncCoordinatorTests
         public List<PlannedChange> Applied { get; } = [];
         public ProviderException? Failure { get; init; }
         public Exception? ListFailure { get; init; }
+        public bool OmitFromList { get; init; }
+        public bool EntryExists { get; init; } = true;
+        public int EntryRequests { get; private set; }
         public Task<ProviderAccount?> GetAccountAsync(string shokoUsername, CancellationToken cancellationToken) => Task.FromResult<ProviderAccount?>(new(1, "remote"));
         public Task<IReadOnlyDictionary<int, ProviderListState>> GetListAsync(string shokoUsername, CancellationToken cancellationToken) =>
             ListFailure is not null
                 ? Task.FromException<IReadOnlyDictionary<int, ProviderListState>>(ListFailure)
-                : Task.FromResult<IReadOnlyDictionary<int, ProviderListState>>(new Dictionary<int, ProviderListState> { [state.MediaId] = state });
-        public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken) => Task.FromResult<ProviderListState?>(state);
+                : Task.FromResult<IReadOnlyDictionary<int, ProviderListState>>(OmitFromList
+                    ? new Dictionary<int, ProviderListState>()
+                    : new Dictionary<int, ProviderListState> { [state.MediaId] = state });
+        public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken)
+        {
+            EntryRequests++;
+            return Task.FromResult(EntryExists ? state : null);
+        }
         public Task<IReadOnlyList<ProviderMediaSearchResult>> SearchAsync(string shokoUsername, string query, bool includeAdult, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProviderMediaSearchResult>>([]);
         public Task<ProviderListState> ApplyAsync(string shokoUsername, PlannedChange change, CancellationToken cancellationToken)
         {

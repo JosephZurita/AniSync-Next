@@ -69,10 +69,46 @@ internal sealed class SyncCoordinator(
                 ProviderListState? destination = null;
                 if (mapping is not null)
                     providerList.TryGetValue(mapping.MediaId, out destination);
-                var token = SyncPlanner.CreateSnapshotToken(source, destination);
-                var change = planner.Plan(source, provider.Key, mapping?.MediaId, destination, token,
-                    clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with
-                { GroupId = groupId };
+
+                PlannedChange Plan(ProviderListState? current)
+                {
+                    var token = SyncPlanner.CreateSnapshotToken(source, current);
+                    return planner.Plan(source, provider.Key, mapping?.MediaId, current, token,
+                        clock.UtcNow, settings.SyncOnlyOnCompletion, settings.SyncRatings) with
+                    { GroupId = groupId };
+                }
+
+                var change = Plan(destination);
+                if (mapping is not null && destination is null && change.Kind != ChangeKind.NoChange)
+                {
+                    try
+                    {
+                        destination = await provider.GetEntryAsync(username, mapping.MediaId, cancellationToken);
+                        change = Plan(destination);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (ProviderException exception)
+                    {
+                        logger.LogWarning(exception,
+                            "Could not verify missing {Provider} media {MediaId} for Shoko user {Username}",
+                            provider.Key, mapping.MediaId, username);
+                        failures.Add(ToRefreshFailure(provider.Key, exception));
+                        continue;
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.LogError(exception,
+                            "Unexpected {Provider} media verification failure for media {MediaId} and Shoko user {Username}",
+                            provider.Key, mapping.MediaId, username);
+                        failures.Add(new ProviderRefreshFailure(provider.Key,
+                            $"{provider.Key} returned an unexpected response. Check the Shoko logs for details.", false));
+                        continue;
+                    }
+                }
+
                 if (change.Kind != ChangeKind.NoChange)
                     reviews.Add(new ReviewItem(change.Id, change, clock.UtcNow));
             }

@@ -36,8 +36,13 @@ const reviews = [
 
 test('dashboard loads and review defaults only safe changes', async ({ page }) => {
   let applied: string[] = []
+  let authenticatedRequests = 0
+  await page.addInitScript(() => {
+    localStorage.setItem('apiSession', JSON.stringify({ apikey: 'browser-session-key' }))
+  })
   await page.route('**/anisync-next/api/**', async route => {
     const request = route.request()
+    if (request.headers().apikey === 'browser-session-key') authenticatedRequests += 1
     const path = new URL(request.url()).pathname
     if (path.endsWith('/session')) return route.fulfill({ json: session })
     if (path.endsWith('/review/apply')) {
@@ -52,6 +57,7 @@ test('dashboard loads and review defaults only safe changes', async ({ page }) =
   await page.goto('/anisync-next/dashboard')
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
   await expect(page.getByText('alice-list')).toBeVisible()
+  await expect.poll(() => authenticatedRequests).toBeGreaterThan(0)
 
   await page.getByRole('link', { name: 'Review' }).click()
   await expect(page.getByText('Safe Series')).toBeVisible()

@@ -22,6 +22,7 @@ export interface UserSettings {
   syncOnlyOnCompletion: boolean
   syncRatings: boolean
   includeAdultSearch: boolean
+  diagnosticLogLevel: 'Off' | 'Basic' | 'Detailed' | 'Trace'
 }
 
 export interface ClientSettings {

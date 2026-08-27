@@ -135,6 +135,7 @@ public sealed class PluginConfigurationService(ConfigurationProvider<PluginConfi
         SyncOnlyOnCompletion = value.SyncOnlyOnCompletion,
         SyncRatings = value.SyncRatings,
         IncludeAdultSearch = value.IncludeAdultSearch,
+        DiagnosticLogLevel = value.DiagnosticLogLevel,
     };
 
     private static ProviderAuthorization Clone(ProviderAuthorization value) => new()
@@ -146,4 +147,3 @@ public sealed class PluginConfigurationService(ConfigurationProvider<PluginConfi
         ExpiresAt = value.ExpiresAt,
     };
 }
-

@@ -99,6 +99,25 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task FailedConfirmedUpdateRemainsInReviewAndReturnsItsOutcome()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(5));
+        var provider = new FakeProvider(ProviderState(2))
+        {
+            Failure = new ProviderException("provider rejected update", false),
+        };
+        var setup = Create(directory.Path, source, provider);
+        var preview = await setup.Coordinator.RefreshAsync("alice", default);
+
+        var outcomes = await setup.Coordinator.ApplyAsync("alice", [preview.Items.Single().Id], default);
+
+        outcomes.Should().ContainSingle().Which.Kind.Should().Be(SyncOutcomeKind.PermanentFailure);
+        (await setup.Store.GetForUserAsync("alice", default)).Should().ContainSingle()
+            .Which.Error.Should().Be("provider rejected update");
+    }
+
+    [Fact]
     public async Task AutomaticSyncQueuesDecreaseInsteadOfApplyingIt()
     {
         using var directory = new TestDirectory();
@@ -130,7 +149,8 @@ public sealed class SyncCoordinatorTests
         var registry = new ProviderRegistry([mal, aniList]);
         var clock = new FixedClock();
         var coordinator = new SyncCoordinator(source, new AllMappings(), registry, new SyncPlanner(),
-            new SyncExecutor(registry, store, clock), store, config, clock, NullLogger<SyncCoordinator>.Instance);
+            new SyncExecutor(registry, store, clock, new NullDiagnostics(), NullLogger<SyncExecutor>.Instance),
+            store, config, clock, NullLogger<SyncCoordinator>.Instance);
 
         var action = () => coordinator.ProcessSeriesAsync("alice", 1, default);
 
@@ -156,7 +176,8 @@ public sealed class SyncCoordinatorTests
         var registry = new ProviderRegistry([mal, aniList]);
         var clock = new FixedClock();
         var coordinator = new SyncCoordinator(source, new AllMappings(), registry, new SyncPlanner(),
-            new SyncExecutor(registry, store, clock), store, config, clock, NullLogger<SyncCoordinator>.Instance);
+            new SyncExecutor(registry, store, clock, new NullDiagnostics(), NullLogger<SyncExecutor>.Instance),
+            store, config, clock, NullLogger<SyncCoordinator>.Instance);
 
         var result = await coordinator.RefreshAsync("alice", default);
 
@@ -197,7 +218,8 @@ public sealed class SyncCoordinatorTests
         var planner = new SyncPlanner();
         var clock = new FixedClock();
         var mappings = new FixedMappings(provider.Key);
-        var executor = new SyncExecutor(registry, store, clock);
+        var executor = new SyncExecutor(registry, store, clock, new NullDiagnostics(),
+            NullLogger<SyncExecutor>.Instance);
         var coordinator = new SyncCoordinator(reader, mappings, registry, planner, executor, store, config, clock,
             NullLogger<SyncCoordinator>.Instance);
         return new Setup(coordinator, store);

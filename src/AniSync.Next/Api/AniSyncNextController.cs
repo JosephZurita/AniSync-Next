@@ -38,16 +38,7 @@ public sealed class AniSyncNextController(
     {
         var current = CurrentUser();
         if (current is null) return Unauthorized(new ApiError("Authentication required."));
-        var clients = current.IsAdmin
-            ? Enum.GetValues<ProviderKey>().Select(provider =>
-            {
-                var client = configuration.GetClient(provider);
-                return new ProviderClientResponse(provider, client.ClientId,
-                    !string.IsNullOrWhiteSpace(client.ClientSecret));
-            }).ToArray()
-            : null;
-        return new SettingsResponse(configuration.GetUserSettings(current.Username),
-            GetConnections(current.Username), clients);
+        return BuildSettingsResponse(current);
     }
 
     [HttpPut("api/settings")]
@@ -55,15 +46,18 @@ public sealed class AniSyncNextController(
     {
         var current = CurrentUser();
         if (current is null) return Unauthorized(new ApiError("Authentication required."));
+        if (!Enum.IsDefined(request.DiagnosticLogLevel))
+            return BadRequest(new ApiError("Diagnostic log level is invalid."));
         var settings = new UserSyncSettings
         {
             AutoSync = request.AutoSync,
             SyncOnlyOnCompletion = request.SyncOnlyOnCompletion,
             SyncRatings = request.SyncRatings,
             IncludeAdultSearch = request.IncludeAdultSearch,
+            DiagnosticLogLevel = request.DiagnosticLogLevel,
         };
         configuration.SaveUserSettings(current.Username, settings);
-        return new SettingsResponse(settings, GetConnections(current.Username));
+        return BuildSettingsResponse(current);
     }
 
     [HttpPut("api/provider-client")]
@@ -274,6 +268,20 @@ public sealed class AniSyncNextController(
                 !string.IsNullOrWhiteSpace(authorization?.AccessToken),
                 authorization?.Username);
         }).ToArray();
+
+    private SettingsResponse BuildSettingsResponse(Shoko.Abstractions.User.IUser user)
+    {
+        var clients = user.IsAdmin
+            ? Enum.GetValues<ProviderKey>().Select(provider =>
+            {
+                var client = configuration.GetClient(provider);
+                return new ProviderClientResponse(provider, client.ClientId,
+                    !string.IsNullOrWhiteSpace(client.ClientSecret));
+            }).ToArray()
+            : null;
+        return new SettingsResponse(configuration.GetUserSettings(user.Username),
+            GetConnections(user.Username), clients);
+    }
 
     private string? CurrentUsername() => CurrentUser()?.Username;
     private Shoko.Abstractions.User.IUser? CurrentUser() =>

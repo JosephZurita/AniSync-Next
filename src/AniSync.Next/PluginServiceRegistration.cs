@@ -29,6 +29,7 @@ public sealed class PluginServiceRegistration : IPluginServiceRegistration
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IPluginConfigurationService, PluginConfigurationService>();
+        services.AddSingleton<IAniSyncDiagnostics, AniSyncDiagnostics>();
         services.AddSingleton<IPluginStateStore>(provider => new JsonPluginStateStore(
             Path.Combine(applicationPaths.PluginsPath, "AniSyncNext"),
             provider.GetRequiredService<ILogger<JsonPluginStateStore>>()));

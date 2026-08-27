@@ -104,7 +104,7 @@ public sealed class ProviderAdapterTests
     }
 
     private static ProviderHttpTransport Transport(HttpMessageHandler handler) =>
-        new(new StaticFactory(handler), new StaticTokens(), new NoDelay());
+        new(new StaticFactory(handler), new StaticTokens(), new NoDelay(), new NullDiagnostics());
 
     private static PlannedChange Change(ProviderKey provider, int? rating) => new(
         Guid.NewGuid(), "alice", 1, 2, "Title", provider, 99, ChangeKind.Advance,

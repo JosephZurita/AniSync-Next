@@ -35,7 +35,7 @@ const reviews = [
 ]
 
 const settings = {
-  settings: { autoSync: true, syncOnlyOnCompletion: false, syncRatings: true, includeAdultSearch: false },
+  settings: { autoSync: true, syncOnlyOnCompletion: false, syncRatings: true, includeAdultSearch: false, diagnosticLogLevel: 'Basic' },
   providers: session.providers,
   clients: [],
 }
@@ -102,8 +102,38 @@ test('dashboard loads and review defaults only safe changes', async ({ page }) =
   await expect.poll(() => applied).toEqual(['11111111-1111-1111-1111-111111111111'])
 
   await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByLabel('Diagnostic log level')).toHaveValue('Basic')
   await page.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect.poll(() => authorizeBaseUrl).toBe('http://127.0.0.1:4173')
+})
+
+test('failed provider update remains reviewable and is never reported as applied', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('apiSession', JSON.stringify({ apikey: 'browser-session-key' }))
+  })
+  await page.route('**/anisync-next/api/**', async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ json: session })
+    if (path.endsWith('/review/refresh')) return route.fulfill({ json: { items: [reviews[0]], failures: [] } })
+    if (path.endsWith('/review/apply')) return route.fulfill({ json: [{
+      kind: 'PermanentFailure',
+      change: reviews[0].change,
+      message: 'MyAnimeList rejected the update (400).',
+      completedAt: '2026-08-27T12:00:01Z',
+    }] })
+    if (path.endsWith('/review')) return route.fulfill({ json: [reviews[0]] })
+    return route.fulfill({ status: 404, json: { error: 'not mocked' } })
+  })
+
+  await page.goto('/anisync-next/review')
+  await page.getByRole('button', { name: 'Refresh from Shoko' }).click()
+  await page.getByRole('button', { name: 'Apply selected' }).click()
+
+  await expect(page.getByText(/1 failed or still needs review/)).toBeVisible()
+  await expect(page.getByText(/MyAnimeList rejected the update \(400\)/)).toBeVisible()
+  await expect(page.getByText('Safe Series')).toBeVisible()
+  await expect(page.getByText('Selected changes applied.')).not.toBeVisible()
 })
 
 test('refresh keeps successful previews and displays a provider failure', async ({ page }) => {

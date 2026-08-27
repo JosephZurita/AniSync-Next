@@ -91,10 +91,43 @@ public sealed class SyncExecutorTests
         (await setup.Store.GetForUserAsync("alice", 10, default)).Should().ContainSingle();
     }
 
+    [Fact]
+    public async Task ConfirmedTransientFailureIsReturnedAndRemainsReviewable()
+    {
+        using var directory = new TestDirectory();
+        var provider = new BehaviorProvider { Failure = new ProviderException("try again", true) };
+        var setup = Create(directory.Path, provider);
+
+        var result = await setup.Executor.ExecuteAsync(Change(ChangeKind.Advance), true, default);
+
+        result.Kind.Should().Be(SyncOutcomeKind.TransientFailure);
+        result.Message.Should().Be("try again");
+        (await setup.Store.GetForUserAsync("alice", default)).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ProviderAcknowledgementMustMatchFreshReadBackBeforeReportingApplied()
+    {
+        using var directory = new TestDirectory();
+        var provider = new BehaviorProvider
+        {
+            ReadBack = new ProviderListState(ProviderKey.AniList, 99, "Series", 1, 12,
+                CanonicalListStatus.Watching, null),
+        };
+        var setup = Create(directory.Path, provider);
+
+        var result = await setup.Executor.ExecuteAsync(Change(ChangeKind.Advance), true, default);
+
+        result.Kind.Should().Be(SyncOutcomeKind.TransientFailure);
+        result.Message.Should().Contain("read-back verification");
+        (await setup.Store.GetForUserAsync("alice", default)).Should().ContainSingle();
+    }
+
     private static Setup Create(string path, BehaviorProvider provider)
     {
         var store = new JsonPluginStateStore(path, NullLogger<JsonPluginStateStore>.Instance);
-        return new(new SyncExecutor(new ProviderRegistry([provider]), store, new Clock()), store);
+        return new(new SyncExecutor(new ProviderRegistry([provider]), store, new Clock(), new NullDiagnostics(),
+            NullLogger<SyncExecutor>.Instance), store);
     }
 
     private static PlannedChange Change(ChangeKind kind, ReviewReason reason = ReviewReason.None) => new(
@@ -113,15 +146,20 @@ public sealed class SyncExecutorTests
     {
         public ProviderKey Key => ProviderKey.AniList;
         public ProviderException? Failure { get; init; }
+        public ProviderListState? ReadBack { get; init; }
         public int ApplyCount { get; private set; }
+        private ProviderListState? _acknowledged;
         public Task<ProviderListState> ApplyAsync(string shokoUsername, PlannedChange change, CancellationToken cancellationToken)
         {
             ApplyCount++;
             if (Failure is not null) throw Failure;
-            return Task.FromResult(new ProviderListState(Key, 99, "Series", 2, 12, CanonicalListStatus.Watching, null));
+            _acknowledged = new ProviderListState(Key, 99, "Series", 2, 12,
+                CanonicalListStatus.Watching, null);
+            return Task.FromResult(_acknowledged);
         }
         public Task<ProviderAccount?> GetAccountAsync(string shokoUsername, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken) =>
+            Task.FromResult(ReadBack ?? _acknowledged);
         public Task<IReadOnlyDictionary<int, ProviderListState>> GetListAsync(string shokoUsername, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IReadOnlyList<ProviderMediaSearchResult>> SearchAsync(string shokoUsername, string query, bool includeAdult, CancellationToken cancellationToken) => throw new NotSupportedException();
     }

@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-r
 import { api, json } from './api'
 import { aniDbAnimeUrl, mappingPath, mappingPrefill, providerAnimeUrl, shokoSeriesUrl } from './review-links'
 import { defaultSelected } from './review-selection'
+import { summarizeApplyOutcomes } from './outcome-summary'
 import type { ClientSettings, Mapping, PlannedChange, ProviderKey, ReviewItem, ReviewRefreshResult, SearchResult, Session, SettingsResponse, SyncOutcome, UserSettings } from './types'
 
 function useRemote<T>(path: string) {
@@ -63,31 +64,33 @@ function Review() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const [refreshFailed, setRefreshFailed] = useState(false)
+  const [messageIsError, setMessageIsError] = useState(false)
   const refresh = async () => {
-    setBusy(true); setMessage(''); setRefreshFailed(false)
+    setBusy(true); setMessage(''); setMessageIsError(false)
     try {
       const result = await api<ReviewRefreshResult>('/review/refresh', { method: 'POST' })
       remote.setData(result.items); setSelected(defaultSelected(result.items))
       if (result.failures.length) {
-        setRefreshFailed(true)
+        setMessageIsError(true)
         setMessage(result.failures.map(failure => `${prettyProvider(failure.provider)}: ${failure.error}`).join(' '))
       } else {
         setMessage(result.items.length ? 'Preview refreshed from current Shoko and provider state.' : 'Everything is in sync.')
       }
-    } catch (value) { setRefreshFailed(true); setMessage(asMessage(value)) } finally { setBusy(false) }
+    } catch (value) { setMessageIsError(true); setMessage(asMessage(value)) } finally { setBusy(false) }
   }
   const apply = async () => {
-    setBusy(true); setMessage('')
+    setBusy(true); setMessage(''); setMessageIsError(false)
     try {
-      await api('/review/apply', json('POST', { ids: [...selected] }))
-      await remote.reload(); setSelected(new Set()); setMessage('Selected changes applied.')
-    } catch (value) { setMessage(asMessage(value)) } finally { setBusy(false) }
+      const outcomes = await api<SyncOutcome[]>('/review/apply', json('POST', { ids: [...selected] }))
+      await remote.reload(); setSelected(new Set())
+      const summary = summarizeApplyOutcomes(outcomes)
+      setMessage(summary.message); setMessageIsError(summary.isError)
+    } catch (value) { setMessageIsError(true); setMessage(asMessage(value)) } finally { setBusy(false) }
   }
   const groups = useMemo(() => groupBySeries(remote.data ?? []), [remote.data])
   return <Page title="Review" subtitle="Only differences that still need action are shown."
     action={<button onClick={() => void refresh()} disabled={busy}>Refresh from Shoko</button>}>
-    {(remote.error || message) && <div className={`notice ${remote.error || refreshFailed ? 'error' : ''}`}>{remote.error || message}</div>}
+    {(remote.error || message) && <div className={`notice ${remote.error || messageIsError ? 'error' : ''}`}>{remote.error || message}</div>}
     {remote.loading ? <Empty text="Loading current preview…" /> : groups.length === 0 ? <Empty text="No pending changes. Refresh whenever Shoko watch state changes." /> :
       <div className="review-list">{groups.map(group => <section className="panel review-group" key={group.seriesId}>
         <div className="series-title"><div><h2>{group.title}</h2><div className="reference-bar">
@@ -173,6 +176,7 @@ function Settings() {
         ['syncRatings', 'Synchronize ratings', 'Sends explicit Shoko ratings using a canonical 0–100 score; unrated series preserve provider scores.'],
         ['includeAdultSearch', 'Include adult titles in search', 'Affects manual mapping searches only.'],
       ] as const).map(([key, title, description]) => <label className="toggle-row" key={key}><div><strong>{title}</strong><small>{description}</small></div><input type="checkbox" checked={remote.data!.settings[key]} onChange={e => void saveSettings({ ...remote.data!.settings, [key]: e.target.checked })} /></label>)}</section>
+      <section className="panel"><h2>Diagnostics</h2><label className="toggle-row"><div><strong>Diagnostic log level</strong><small>Writes redacted AniSync events to the normal Shoko log. Detailed and Trace include provider request status and timing, but never credentials or response bodies.</small></div><select aria-label="Diagnostic log level" value={remote.data.settings.diagnosticLogLevel} onChange={e => void saveSettings({ ...remote.data!.settings, diagnosticLogLevel: e.target.value as UserSettings['diagnosticLogLevel'] })}><option value="Off">Off</option><option value="Basic">Basic</option><option value="Detailed">Detailed</option><option value="Trace">Trace</option></select></label></section>
       <section className="panel"><h2>Provider connections</h2>{remote.data.providers.map(connection => <div className="connection" key={connection.provider}><div><strong>{prettyProvider(connection.provider)}</strong><small>{connection.connected ? `Connected as ${connection.username}` : connection.configured ? 'Ready to connect' : 'Client credentials required'}</small></div><div className="button-group"><button disabled={!connection.configured} onClick={() => void connect(connection.provider)}>{connection.connected ? 'Reconnect' : 'Connect'}</button>{connection.connected && <button className="secondary" onClick={() => void api(`/providers/${connection.provider}`, { method: 'DELETE' }).then(remote.reload).catch(value => setMessage(asMessage(value)))}>Disconnect</button>}</div></div>)}</section>
       {remote.data.clients && <AdminClients clients={remote.data.clients} onSaved={() => void remote.reload()} />}
     </>}

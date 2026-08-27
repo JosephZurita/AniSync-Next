@@ -1,4 +1,5 @@
 using AniSync.Next.Api;
+using AniSync.Next.Configuration;
 using AniSync.Next.Domain;
 using AniSync.Next.Persistence;
 using FluentAssertions;
@@ -82,5 +83,15 @@ public sealed class ApiJsonContractTests
         request!.SeriesId.Should().Be(3);
         request.Provider.Should().Be(ProviderKey.AniList);
         request.MediaTitle.Should().Be("Title");
+    }
+
+    [Fact]
+    public void DiagnosticLogLevelUsesTheFrontendStringContract()
+    {
+        var settings = new UserSyncSettings { DiagnosticLogLevel = DiagnosticLogLevel.Detailed };
+
+        var json = JObject.Parse(JsonConvert.SerializeObject(settings, ShokoJsonSettings));
+
+        json["diagnosticLogLevel"]!.Value<string>().Should().Be("Detailed");
     }
 }

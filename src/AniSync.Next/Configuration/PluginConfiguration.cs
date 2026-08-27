@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Shoko.Abstractions.Config;
 using Shoko.Abstractions.Plugin;
 using System.Collections.Concurrent;
@@ -60,6 +61,18 @@ public sealed class UserSyncSettings
 
     [JsonProperty("includeAdultSearch")]
     public bool IncludeAdultSearch { get; set; }
+
+    [JsonProperty("diagnosticLogLevel")]
+    public DiagnosticLogLevel DiagnosticLogLevel { get; set; } = DiagnosticLogLevel.Basic;
+}
+
+[JsonConverter(typeof(StringEnumConverter))]
+public enum DiagnosticLogLevel
+{
+    Off,
+    Basic,
+    Detailed,
+    Trace,
 }
 
 public sealed class ProviderAuthorization
@@ -79,4 +92,3 @@ public sealed class ProviderAuthorization
     [JsonProperty("expiresAt")]
     public DateTimeOffset? ExpiresAt { get; set; }
 }
-

@@ -34,7 +34,8 @@ public sealed record UpdateSettingsRequest(
     bool AutoSync,
     bool SyncOnlyOnCompletion,
     bool SyncRatings,
-    bool IncludeAdultSearch);
+    bool IncludeAdultSearch,
+    DiagnosticLogLevel DiagnosticLogLevel);
 
 [JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record UpdateProviderClientRequest(

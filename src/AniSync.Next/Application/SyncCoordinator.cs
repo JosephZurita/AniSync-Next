@@ -138,6 +138,7 @@ internal sealed class SyncCoordinator(
 
         var settings = configuration.GetUserSettings(username);
         var outcomes = new List<SyncOutcome>(selected.Length);
+        var completedIds = new List<Guid>(selected.Length);
         foreach (var item in selected)
         {
             var source = await shokoStateReader.GetSeriesStateAsync(username, item.Change.SeriesId, cancellationToken)
@@ -158,12 +159,17 @@ internal sealed class SyncCoordinator(
             if (current.Kind == ChangeKind.NoChange)
             {
                 outcomes.Add(new SyncOutcome(SyncOutcomeKind.Unchanged, current, CompletedAt: clock.UtcNow));
+                completedIds.Add(item.Id);
                 continue;
             }
-            outcomes.Add(await executor.ExecuteAsync(current, confirmedReview: true, cancellationToken));
+            var outcome = await executor.ExecuteAsync(current, confirmedReview: true, cancellationToken);
+            outcomes.Add(outcome);
+            if (outcome.Kind is SyncOutcomeKind.Applied or SyncOutcomeKind.Unchanged)
+                completedIds.Add(item.Id);
         }
 
-        await stateStore.RemoveAsync(username, ids, cancellationToken);
+        if (completedIds.Count > 0)
+            await stateStore.RemoveAsync(username, completedIds, cancellationToken);
         return outcomes;
     }
 

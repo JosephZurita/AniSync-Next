@@ -2,6 +2,7 @@ using AniSync.Next.Application;
 using AniSync.Next.Domain;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Diagnostics;
 
 namespace AniSync.Next.Providers;
 
@@ -18,7 +19,8 @@ internal sealed class ProviderDelay : IProviderDelay
 internal sealed class ProviderHttpTransport(
     IHttpClientFactory httpClientFactory,
     IProviderTokenService tokenService,
-    IProviderDelay delay)
+    IProviderDelay delay,
+    IAniSyncDiagnostics diagnostics)
 {
     public async Task<HttpResponseMessage> SendAsync(
         ProviderKey provider,
@@ -36,6 +38,10 @@ internal sealed class ProviderHttpTransport(
                 : await tokenService.GetAccessTokenAsync(shokoUsername, provider, cancellationToken);
             using var request = requestFactory();
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var target = SafeTarget(request.RequestUri);
+            diagnostics.Write(shokoUsername, Configuration.DiagnosticLogLevel.Trace, "provider.request",
+                $"provider={provider} attempt={attempt + 1} method={request.Method.Method} target={target}");
+            var stopwatch = Stopwatch.StartNew();
             HttpResponseMessage response;
             try
             {
@@ -48,11 +54,16 @@ internal sealed class ProviderHttpTransport(
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
+                diagnostics.Write(shokoUsername, Configuration.DiagnosticLogLevel.Detailed, "provider.transport-failure",
+                    $"provider={provider} attempt={attempt + 1} target={target} elapsedMs={stopwatch.ElapsedMilliseconds} errorType={ex.GetType().Name}");
                 if (attempt == 2)
                     throw new ProviderException($"{provider} could not be reached.", true, innerException: ex);
                 await delay.DelayAsync(TimeSpan.FromSeconds(1 << attempt), cancellationToken);
                 continue;
             }
+
+            diagnostics.Write(shokoUsername, Configuration.DiagnosticLogLevel.Detailed, "provider.response",
+                $"provider={provider} attempt={attempt + 1} target={target} status={(int)response.StatusCode} elapsedMs={stopwatch.ElapsedMilliseconds}");
 
             if (response.IsSuccessStatusCode) return response;
 
@@ -100,4 +111,8 @@ internal sealed class ProviderHttpTransport(
         var sanitized = value.Replace('\r', ' ').Replace('\n', ' ');
         return sanitized.Length <= 300 ? sanitized : sanitized[..300];
     }
+
+    private static string SafeTarget(Uri? uri) => uri is null
+        ? "unknown"
+        : $"{uri.Host}{uri.AbsolutePath}";
 }

@@ -19,6 +19,8 @@ AniSync Next is intentionally separate from legacy AniSync. It has a new package
 - Review-only decreases, unresolved mappings, stale previews, and permanent failures.
 - anime-offline-database ID resolution with persisted trusted mappings; missing IDs require an explicit manual match.
 - Per-user settings and provider connections, with API client credentials restricted to Shoko administrators.
+- Provider updates are read back before they are reported as applied; mismatches remain reviewable failures.
+- Configurable redacted diagnostics are written to Shoko's normal log without credentials, authorization headers, or request bodies.
 - Persistent pending work, mappings, reviews, and grouped history in an atomic versioned JSON state file.
 - Trigger coalescing, retryable work recovery, cancellation, and clean shutdown draining.
 
@@ -55,7 +57,14 @@ Manual installation remains supported. Download `AniSync.Next.dll` and optionall
 3. Each Shoko user connects their own AniList and/or MyAnimeList account.
 4. Use **Review → Refresh from Shoko** to calculate the current differences. There is no periodic refresh.
 
-Only four settings are exposed because each has a defined runtime effect: automatic sync, progress only on completion, rating sync, and adult-title inclusion for manual mapping search.
+The synchronization settings cover automatic sync, progress only on completion, rating sync, and adult-title inclusion for manual mapping search. **Diagnostic log level** controls redacted logging separately:
+
+- `Off`: warnings and errors only.
+- `Basic` (default): sync attempts, verified outcomes, and failures.
+- `Detailed`: Basic plus provider HTTP status and timing.
+- `Trace`: Detailed plus safe request method/path and retry-attempt context.
+
+Diagnostics include Shoko user, series ID, provider media ID, and before/after state. OAuth codes, access and refresh tokens, client secrets, authorization headers, and request bodies are never logged. Provider rejection warnings may include the provider's truncated error message, but never successful response bodies.
 
 ## Architecture
 

@@ -20,7 +20,7 @@ public sealed class ProviderHttpTransportTests
                 return new HttpResponseMessage(HttpStatusCode.OK);
             });
         var tokens = new StubTokens();
-        var transport = new ProviderHttpTransport(new StubFactory(handler), tokens, new RecordingDelay());
+        var transport = new ProviderHttpTransport(new StubFactory(handler), tokens, new RecordingDelay(), new NullDiagnostics());
 
         using var response = await transport.SendAsync(ProviderKey.AniList, "alice", "client",
             () => new HttpRequestMessage(HttpMethod.Get, "https://example.test"), default);
@@ -37,7 +37,7 @@ public sealed class ProviderHttpTransportTests
         limited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(9));
         var handler = new SequenceHandler(_ => limited, _ => new HttpResponseMessage(HttpStatusCode.OK));
         var delay = new RecordingDelay();
-        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), delay);
+        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), delay, new NullDiagnostics());
 
         using var response = await transport.SendAsync(ProviderKey.AniList, "alice", "client",
             () => new HttpRequestMessage(HttpMethod.Get, "https://example.test"), default);
@@ -53,7 +53,7 @@ public sealed class ProviderHttpTransportTests
         {
             Content = new StringContent("invalid payload"),
         });
-        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), new RecordingDelay());
+        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), new RecordingDelay(), new NullDiagnostics());
 
         var action = () => transport.SendAsync(ProviderKey.MyAnimeList, "alice", "client",
             () => new HttpRequestMessage(HttpMethod.Get, "https://example.test"), default);
@@ -67,7 +67,7 @@ public sealed class ProviderHttpTransportTests
     public async Task CallerCancellationIsNotCollapsedIntoProviderFailure()
     {
         var handler = new CancellingHandler();
-        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), new RecordingDelay());
+        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), new RecordingDelay(), new NullDiagnostics());
         using var source = new CancellationTokenSource();
         source.Cancel();
 
@@ -84,7 +84,7 @@ public sealed class ProviderHttpTransportTests
             (_, _) => throw new TaskCanceledException("provider timeout"),
             (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
         var delay = new RecordingDelay();
-        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), delay);
+        var transport = new ProviderHttpTransport(new StubFactory(handler), new StubTokens(), delay, new NullDiagnostics());
 
         using var response = await transport.SendAsync(ProviderKey.AniList, "alice", "client",
             () => new HttpRequestMessage(HttpMethod.Get, "https://example.test"), default);

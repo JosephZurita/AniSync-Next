@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { api, json } from './api'
+import { aniDbAnimeUrl, mappingPath, mappingPrefill, providerAnimeUrl, shokoSeriesUrl } from './review-links'
 import { defaultSelected } from './review-selection'
 import type { ClientSettings, Mapping, PlannedChange, ProviderKey, ReviewItem, ReviewRefreshResult, SearchResult, Session, SettingsResponse, SyncOutcome, UserSettings } from './types'
 
@@ -89,7 +90,11 @@ function Review() {
     {(remote.error || message) && <div className={`notice ${remote.error || refreshFailed ? 'error' : ''}`}>{remote.error || message}</div>}
     {remote.loading ? <Empty text="Loading current preview…" /> : groups.length === 0 ? <Empty text="No pending changes. Refresh whenever Shoko watch state changes." /> :
       <div className="review-list">{groups.map(group => <section className="panel review-group" key={group.seriesId}>
-        <div className="series-title"><div><h2>{group.title}</h2><small>AniDB {group.aniDbAnimeId}</small></div></div>
+        <div className="series-title"><div><h2>{group.title}</h2><div className="reference-bar">
+          <a href={shokoSeriesUrl(group.seriesId)} target="_blank" rel="noopener noreferrer">Open in Shoko</a>
+          <a href={aniDbAnimeUrl(group.aniDbAnimeId)} target="_blank" rel="noopener noreferrer">AniDB {group.aniDbAnimeId}</a>
+          <span>Preview updated {formatTimestamp(group.updatedAt)}</span>
+        </div></div></div>
         {group.items.map(item => <ReviewRow key={item.id} item={item} selected={selected.has(item.id)} onToggle={() => {
           if (!item.change.isActionable) return
           setSelected(current => {
@@ -106,17 +111,23 @@ function Review() {
 
 function ReviewRow({ item, selected, onToggle }: { item: ReviewItem, selected: boolean, onToggle: () => void }) {
   const change = item.change
-  return <label className={`review-row ${change.requiresReview ? 'risky' : ''}`}>
-    <input type="checkbox" checked={selected} disabled={!change.isActionable} onChange={onToggle} />
+  const providerUrl = providerAnimeUrl(change.provider, change.providerMediaId)
+  return <div className={`review-row ${change.requiresReview ? 'risky' : ''}`}>
+    <input type="checkbox" aria-label={`${shortProvider(change.provider)} ${change.kind} ${change.title}`} checked={selected} disabled={!change.isActionable} onChange={onToggle} />
     <div className="provider-badge">{shortProvider(change.provider)}</div>
-    <div className="change-main"><strong>{change.kind}</strong><span>{describeChange(change)}</span>{item.error && <small>{item.error}</small>}</div>
+    <div className="change-main"><strong>{change.kind}</strong><span>{describeChange(change)}</span>{item.error && <small>{item.error}</small>}<div className="provider-reference">
+      {providerUrl
+        ? <a href={providerUrl} target="_blank" rel="noopener noreferrer">{prettyProvider(change.provider)} #{change.providerMediaId}</a>
+        : <Link to={mappingPath(change)}>Resolve mapping</Link>}
+    </div></div>
     <span className={`pill ${change.requiresReview ? 'warn' : 'good'}`}>{reason(change)}</span>
-  </label>
+  </div>
 }
 
 function Mappings() {
+  const [searchParams] = useSearchParams()
   const remote = useRemote<Mapping[]>('/mappings')
-  const [form, setForm] = useState({ seriesId: '', aniDbAnimeId: '', provider: 'AniList' as ProviderKey, query: '' })
+  const [form, setForm] = useState(() => mappingPrefill(searchParams))
   const [results, setResults] = useState<SearchResult[]>([])
   const [error, setError] = useState('')
   const search = async (event: FormEvent) => {
@@ -225,10 +236,11 @@ function reason(change: PlannedChange) {
   return 'Safe forward change'
 }
 function groupBySeries(items: ReviewItem[]) {
-  const grouped = new Map<number, { seriesId: number, aniDbAnimeId: number, title: string, items: ReviewItem[] }>()
+  const grouped = new Map<number, { seriesId: number, aniDbAnimeId: number, title: string, updatedAt: string, items: ReviewItem[] }>()
   for (const item of items) {
-    const group = grouped.get(item.change.seriesId) ?? { seriesId: item.change.seriesId, aniDbAnimeId: item.change.aniDbAnimeId, title: item.change.title, items: [] }
+    const group = grouped.get(item.change.seriesId) ?? { seriesId: item.change.seriesId, aniDbAnimeId: item.change.aniDbAnimeId, title: item.change.title, updatedAt: item.updatedAt, items: [] }
     group.items.push(item); grouped.set(item.change.seriesId, group)
+    if (Date.parse(item.updatedAt) > Date.parse(group.updatedAt)) group.updatedAt = item.updatedAt
   }
   return [...grouped.values()].sort((a, b) => a.title.localeCompare(b.title))
 }
@@ -242,4 +254,8 @@ function groupHistory(entries: SyncOutcome[]) {
     groups.set(id, group)
   }
   return [...groups.values()].sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
+}
+function formatTimestamp(value: string) {
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? 'unknown' : timestamp.toLocaleString()
 }

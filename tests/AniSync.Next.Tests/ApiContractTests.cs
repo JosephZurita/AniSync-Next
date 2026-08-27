@@ -83,11 +83,58 @@ public sealed class ApiContractTests
         stale.Result.Should().BeOfType<ConflictObjectResult>();
     }
 
+    [Fact]
+    public void OAuthUsesValidatedBrowserOriginBehindTlsTerminatingProxy()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("shoko.example.test", 8111);
+
+        var resolved = AniSyncNextController.ResolveOAuthBaseUrl("https://shoko.example.test", context.Request);
+
+        resolved.Should().Be("https://shoko.example.test");
+    }
+
+    [Fact]
+    public void AuthorizeBindsSignedStateToValidatedPublicOrigin()
+    {
+        using var directory = new TestDirectory();
+        var oauth = new Mock<IProviderOAuthService>();
+        oauth.Setup(service => service.BuildAuthorizeUri(
+                ProviderKey.AniList, "alice", "https://shoko.example.test"))
+            .Returns(new Uri("https://anilist.co/api/v2/oauth/authorize?client_id=1"));
+        var controller = Controller(directory.Path, User("alice", false), oauth: oauth.Object);
+        controller.Request.Scheme = "http";
+        controller.Request.Host = new HostString("shoko.example.test", 8111);
+
+        var result = controller.Authorize(ProviderKey.AniList, "https://shoko.example.test");
+
+        result.Value.Should().NotBeNull();
+        oauth.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData("https://attacker.example")]
+    [InlineData("https://user@shoko.example.test")]
+    [InlineData("javascript://shoko.example.test")]
+    [InlineData("https://shoko.example.test/unexpected-path")]
+    public void OAuthRejectsUntrustedBrowserOrigins(string browserBaseUrl)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("shoko.example.test", 8111);
+
+        var resolved = AniSyncNextController.ResolveOAuthBaseUrl(browserBaseUrl, context.Request);
+
+        resolved.Should().Be("http://shoko.example.test:8111");
+    }
+
     private static AniSyncNextController Controller(
         string path,
         IUser? current,
         IPluginStateStore? store = null,
-        ISyncCoordinator? coordinator = null)
+        ISyncCoordinator? coordinator = null,
+        IProviderOAuthService? oauth = null)
     {
         var users = new Mock<IUserService>();
         users.Setup(service => service.GetUserFromHttpContext(It.IsAny<HttpContext>())).Returns(current);
@@ -95,7 +142,7 @@ public sealed class ApiContractTests
         var controller = new AniSyncNextController(
             users.Object,
             new FakeConfiguration(),
-            Mock.Of<IProviderOAuthService>(),
+            oauth ?? Mock.Of<IProviderOAuthService>(),
             Mock.Of<IProviderRegistry>(),
             coordinator ?? Mock.Of<ISyncCoordinator>(),
             state,

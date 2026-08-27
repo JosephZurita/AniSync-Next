@@ -203,7 +203,10 @@ function Empty({ text }: { text: string }) { return <div className="empty">{text
 function asMessage(value: unknown) { return value instanceof Error ? value.message : 'Something went wrong.' }
 function prettyProvider(provider: ProviderKey) { return provider === 'MyAnimeList' ? 'MyAnimeList' : 'AniList' }
 function shortProvider(provider: ProviderKey) { return provider === 'MyAnimeList' ? 'MAL' : 'AL' }
-function connect(provider: ProviderKey) { void api<{ url: string }>(`/providers/${provider}/authorize`).then(result => { window.location.href = result.url }) }
+function connect(provider: ProviderKey) {
+  const query = new URLSearchParams({ baseUrl: window.location.origin })
+  void api<{ url: string }>(`/providers/${provider}/authorize?${query}`).then(result => { window.location.href = result.url })
+}
 function describeChange(change: PlannedChange) {
   if (change.kind === 'Rating') return `Rating ${change.beforeRatingRaw ?? 'none'} → ${change.afterRatingRaw ?? 'none'}`
   if (change.kind === 'UnresolvedMapping') return 'Provider ID needs a manual match'

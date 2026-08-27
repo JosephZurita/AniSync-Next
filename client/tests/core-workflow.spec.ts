@@ -34,17 +34,30 @@ const reviews = [
   },
 ]
 
+const settings = {
+  settings: { autoSync: true, syncOnlyOnCompletion: false, syncRatings: true, includeAdultSearch: false },
+  providers: session.providers,
+  clients: [],
+}
+
 test('dashboard loads and review defaults only safe changes', async ({ page }) => {
   let applied: string[] = []
   let authenticatedRequests = 0
+  let authorizeBaseUrl = ''
   await page.addInitScript(() => {
     localStorage.setItem('apiSession', JSON.stringify({ apikey: 'browser-session-key' }))
   })
   await page.route('**/anisync-next/api/**', async route => {
     const request = route.request()
     if (request.headers().apikey === 'browser-session-key') authenticatedRequests += 1
-    const path = new URL(request.url()).pathname
+    const url = new URL(request.url())
+    const path = url.pathname
     if (path.endsWith('/session')) return route.fulfill({ json: session })
+    if (path.endsWith('/settings')) return route.fulfill({ json: settings })
+    if (path.endsWith('/providers/MyAnimeList/authorize')) {
+      authorizeBaseUrl = url.searchParams.get('baseUrl') ?? ''
+      return route.fulfill({ json: { url: 'http://127.0.0.1:4173/anisync-next/settings' } })
+    }
     if (path.endsWith('/review/apply')) {
       applied = (request.postDataJSON() as { ids: string[] }).ids
       return route.fulfill({ json: [] })
@@ -69,4 +82,8 @@ test('dashboard loads and review defaults only safe changes', async ({ page }) =
   await expect(page.getByRole('checkbox', { name: /MAL Decrease/ })).not.toBeChecked()
   await page.getByRole('button', { name: 'Apply selected' }).click()
   await expect.poll(() => applied).toEqual(['11111111-1111-1111-1111-111111111111'])
+
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect.poll(() => authorizeBaseUrl).toBe('http://127.0.0.1:4173')
 })

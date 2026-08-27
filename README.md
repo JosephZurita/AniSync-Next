@@ -25,7 +25,7 @@ The first release does not write start/finish dates, infer rewatches, update rep
 
 ## Requirements
 
-- A compatible Shoko Server 6 Dev build. AniSync Next is Dev-only and currently pins `Shoko.Abstractions` `6.0.0-alpha.81`.
+- A compatible Shoko Server 6 Dev build. AniSync Next is Dev-only and currently pins `Shoko.Abstractions` `6.0.0-alpha.83`.
 - A MyAnimeList API application and/or AniList developer client.
 - Legacy AniSync disabled while AniSync Next is active.
 
@@ -49,7 +49,7 @@ Manual installation remains supported. Download `AniSync.Next.dll` and optionall
 
 ## Configure
 
-1. Create provider apps. Use `https://<your-shoko-host>/anisync-next/oauth/callback` as the callback URL.
+1. Create provider apps. Use `https://<your-shoko-host>/anisync-next/oauth/callback` as the callback URL. It must exactly match the public browser origin, including scheme and non-default port. AniSync Next uses that public origin when Shoko is behind a reverse proxy.
 2. Open **AniSync Next → Settings** as a Shoko administrator and enter the client IDs/secrets.
 3. Each Shoko user connects their own AniList and/or MyAnimeList account.
 4. Use **Review → Refresh from Shoko** to calculate the current differences. There is no periodic refresh.

@@ -85,12 +85,12 @@ public sealed class AniSyncNextController(
     }
 
     [HttpGet("api/providers/{provider}/authorize")]
-    public ActionResult<object> Authorize(ProviderKey provider)
+    public ActionResult<object> Authorize(ProviderKey provider, [FromQuery] string? baseUrl = null)
     {
         var current = CurrentUser();
         if (current is null) return Unauthorized(new ApiError("Authentication required."));
-        var baseUrl = $"{Request.Scheme}://{Request.Host}";
-        return new { url = oauth.BuildAuthorizeUri(provider, current.Username, baseUrl).ToString() };
+        var effectiveBaseUrl = ResolveOAuthBaseUrl(baseUrl, Request);
+        return new { url = oauth.BuildAuthorizeUri(provider, current.Username, effectiveBaseUrl).ToString() };
     }
 
     [HttpDelete("api/providers/{provider}")]
@@ -278,6 +278,21 @@ public sealed class AniSyncNextController(
     private string? CurrentUsername() => CurrentUser()?.Username;
     private Shoko.Abstractions.User.IUser? CurrentUser() =>
         HttpContext is null ? null : userService.GetUserFromHttpContext(HttpContext);
+    internal static string ResolveOAuthBaseUrl(string? browserBaseUrl, HttpRequest request)
+    {
+        var requestBaseUrl = $"{request.Scheme}://{request.Host}";
+        if (!Uri.TryCreate(browserBaseUrl, UriKind.Absolute, out var browserUri) ||
+            browserUri.Scheme is not ("http" or "https") ||
+            !string.IsNullOrEmpty(browserUri.UserInfo) ||
+            browserUri.AbsolutePath != "/" ||
+            !string.IsNullOrEmpty(browserUri.Query) ||
+            !string.IsNullOrEmpty(browserUri.Fragment) ||
+            !browserUri.Host.Equals(request.Host.Host, StringComparison.OrdinalIgnoreCase))
+            return requestBaseUrl;
+
+        return browserUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    }
+
     private static bool SameUser(string left, string right) =>
         left.Equals(right, StringComparison.OrdinalIgnoreCase);
 }

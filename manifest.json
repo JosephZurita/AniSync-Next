@@ -19,6 +19,22 @@
   ],
   "releases": [
     {
+      "version": "0.1.0-dev.9",
+      "tag": "dev-9-687b7b1",
+      "source_revision": "687b7b1bd899019e99ae6677fa45461fde7d0c04",
+      "released_at": "2026-08-27T15:39:57+00:00",
+      "channel": "Dev",
+      "release_notes": "Automated AniSync Next 0.1.0-dev.9 build from 687b7b1bd899019e99ae6677fa45461fde7d0c04 using Shoko.Abstractions 6.0.0-alpha.83.",
+      "archives": [
+        {
+          "runtime": "any",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/JosephZurita/AniSync-Next/releases/download/dev-9-687b7b1/AniSync.Next-0.1.0-dev.9.zip",
+          "checksum": "c0daf08253b83e4cb504f520b5b36b54ce02021010b15ee3ef690ebe8eebb34d"
+        }
+      ]
+    },
+    {
       "version": "0.1.0-dev.8",
       "tag": "dev-8-84a355a",
       "source_revision": "84a355ab4e8837b5d510f71349905df18ad7eadb",

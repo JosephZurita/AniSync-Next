@@ -149,6 +149,32 @@ public sealed class SyncPlannerTests
         result.AfterRatingRaw.Should().Be(20);
     }
 
+    [Fact]
+    public void UnratedShokoSeriesDoesNotClearExistingProviderRating()
+    {
+        var result = Plan(Source(progress: 5, rating: null), Destination(progress: 5, rating: 80));
+
+        result.Kind.Should().Be(ChangeKind.NoChange);
+        result.BeforeRatingRaw.Should().Be(80);
+        result.AfterRatingRaw.Should().Be(80);
+    }
+
+    [Theory]
+    [InlineData(6, 5, ChangeKind.Advance)]
+    [InlineData(3, 7, ChangeKind.Decrease)]
+    public void UnratedShokoSeriesPreservesProviderRatingDuringProgressChanges(
+        int sourceProgress,
+        int providerProgress,
+        ChangeKind expectedKind)
+    {
+        var result = Plan(Source(progress: sourceProgress, rating: null),
+            Destination(progress: providerProgress, rating: 80));
+
+        result.Kind.Should().Be(expectedKind);
+        result.BeforeRatingRaw.Should().Be(80);
+        result.AfterRatingRaw.Should().Be(80);
+    }
+
     private PlannedChange Plan(
         ShokoSeriesState source,
         ProviderListState? destination,

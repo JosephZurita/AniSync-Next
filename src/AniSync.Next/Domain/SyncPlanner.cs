@@ -15,15 +15,16 @@ public sealed class SyncPlanner : ISyncPlanner
         bool syncOnlyOnCompletion,
         bool syncRatings)
     {
+        var shouldSyncRating = syncRatings && source.RatingRaw is not null;
         if (providerMediaId is null)
         {
-            return Create(source, provider, null, null, ChangeKind.UnresolvedMapping,
-                ReviewReason.MissingMapping, snapshotToken, now);
+            return ApplyRatingPolicy(Create(source, provider, null, null, ChangeKind.UnresolvedMapping,
+                ReviewReason.MissingMapping, snapshotToken, now), null, shouldSyncRating);
         }
 
         if (destination is null || !destination.Exists)
         {
-            if (source.Progress <= 0 && source.RatingRaw is not null && syncRatings)
+            if (source.Progress <= 0 && shouldSyncRating)
             {
                 return Create(source, provider, providerMediaId, destination, ChangeKind.Rating,
                     ReviewReason.RatingWouldCreateEntry, snapshotToken, now);
@@ -31,20 +32,20 @@ public sealed class SyncPlanner : ISyncPlanner
 
             if (source.Progress <= 0)
             {
-                return Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-                    ReviewReason.None, snapshotToken, now);
+                return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
+                    ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
             }
 
             if (syncOnlyOnCompletion && source.TotalEpisodes > 0 && source.Progress < source.TotalEpisodes)
             {
-                return Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-                    ReviewReason.None, snapshotToken, now);
+                return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
+                    ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
             }
 
             var addition = Create(source, provider, providerMediaId, destination,
                 source.DesiredStatus == CanonicalListStatus.Completed ? ChangeKind.Complete : ChangeKind.Add,
                 ReviewReason.None, snapshotToken, now);
-            return syncRatings ? addition : addition with { AfterRatingRaw = null };
+            return ApplyRatingPolicy(addition, destination, shouldSyncRating);
         }
 
         var progressSyncAllowed = !syncOnlyOnCompletion ||
@@ -55,7 +56,7 @@ public sealed class SyncPlanner : ISyncPlanner
         {
             var decrease = Create(source, provider, providerMediaId, destination, ChangeKind.Decrease,
                 ReviewReason.ProgressDecrease, snapshotToken, now);
-            return syncRatings ? decrease : decrease with { AfterRatingRaw = destination.RatingRaw };
+            return ApplyRatingPolicy(decrease, destination, shouldSyncRating);
         }
 
         if (progressSyncAllowed &&
@@ -66,10 +67,10 @@ public sealed class SyncPlanner : ISyncPlanner
                 : ChangeKind.Advance;
             var progressChange = Create(source, provider, providerMediaId, destination, kind,
                 ReviewReason.None, snapshotToken, now);
-            return syncRatings ? progressChange : progressChange with { AfterRatingRaw = destination.RatingRaw };
+            return ApplyRatingPolicy(progressChange, destination, shouldSyncRating);
         }
 
-        if (syncRatings && source.RatingRaw != destination.RatingRaw)
+        if (shouldSyncRating && source.RatingRaw != destination.RatingRaw)
         {
             return Create(source, provider, providerMediaId, destination, ChangeKind.Rating,
                 ReviewReason.None, snapshotToken, now) with
@@ -79,9 +80,16 @@ public sealed class SyncPlanner : ISyncPlanner
             };
         }
 
-        return Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-            ReviewReason.None, snapshotToken, now);
+        return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
+            ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
     }
+
+    private static PlannedChange ApplyRatingPolicy(
+        PlannedChange change,
+        ProviderListState? destination,
+        bool shouldSyncRating) => shouldSyncRating
+            ? change
+            : change with { AfterRatingRaw = destination?.RatingRaw };
 
     public static string CreateSnapshotToken(ShokoSeriesState source, ProviderListState? destination)
     {

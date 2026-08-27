@@ -15,6 +15,7 @@ AniSync Next is intentionally separate from legacy AniSync. It has a new package
 - Outbound Shoko → AniList and MyAnimeList synchronization.
 - Fresh progress calculated from the highest currently watched normal episode using `LastPlayedAt`, including correct unwatch/decrease previews.
 - Safe forward progress, completion status, and canonical 0–100 rating synchronization.
+- Unrated Shoko series preserve existing AniList and MyAnimeList scores rather than clearing them.
 - Review-only decreases, unresolved mappings, stale previews, and permanent failures.
 - anime-offline-database ID resolution with persisted trusted mappings; missing IDs require an explicit manual match.
 - Per-user settings and provider connections, with API client credentials restricted to Shoko administrators.

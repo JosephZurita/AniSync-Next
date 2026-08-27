@@ -28,6 +28,20 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshDoesNotShowProviderRatingWhenShokoSeriesIsUnrated()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(5) with { RatingRaw = null });
+        var provider = new FakeProvider(ProviderState(5) with { RatingRaw = 80 });
+        var setup = Create(directory.Path, source, provider);
+
+        var preview = await setup.Coordinator.RefreshAsync("alice", default);
+
+        preview.Items.Should().BeEmpty("an absent Shoko rating must preserve the provider score");
+        (await setup.Store.GetForUserAsync("alice", default)).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ApplyRejectsPreviewWhenShokoStateChangedAfterRefresh()
     {
         using var directory = new TestDirectory();

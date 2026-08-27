@@ -1,0 +1,38 @@
+{
+  "type": "package",
+  "id": "8eea2528-a2f8-543a-8bc5-a06bb5a138bd",
+  "name": "AniSync Next",
+  "overview": "Synchronizes Shoko watch state, completion status, and ratings to AniList and MyAnimeList with reviewable decreases and mappings.",
+  "authors": "JosephZurita",
+  "repository_url": "https://github.com/JosephZurita/AniSync-Next",
+  "homepage_url": "https://github.com/JosephZurita/AniSync-Next",
+  "image_url": "https://raw.githubusercontent.com/JosephZurita/AniSync-Next/master/docs/banner.svg",
+  "tags": [
+    "shoko",
+    "anime",
+    "watch-state",
+    "sync",
+    "anilist",
+    "myanimelist",
+    "mal",
+    "plugin"
+  ],
+  "releases": [
+    {
+      "version": "0.1.0-dev.1",
+      "tag": "dev-1-adc237b",
+      "source_revision": "adc237ba432323fd07f266de3d1d57d26af5c3e2",
+      "released_at": "2026-08-27T10:04:03+00:00",
+      "channel": "Dev",
+      "release_notes": "Automated AniSync Next 0.1.0-dev.1 build from adc237ba432323fd07f266de3d1d57d26af5c3e2 using Shoko.Abstractions 6.0.0-alpha.81.",
+      "archives": [
+        {
+          "runtime": "any",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/JosephZurita/AniSync-Next/releases/download/dev-1-adc237b/AniSync.Next-0.1.0-dev.1.zip",
+          "checksum": "a83ab12d8368e9a53eedd31af75b21dff542c7f34737a53b89763c1a182d8819"
+        }
+      ]
+    }
+  ]
+}

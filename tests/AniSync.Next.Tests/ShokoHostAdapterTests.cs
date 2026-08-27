@@ -43,15 +43,22 @@ public sealed class ShokoHostAdapterTests
         var watchedSeries = Series(9, 100, "Watched", 12);
         var ratedSeries = Series(10, 101, "Rated", 24);
         var episodeData = EpisodeData(watchedSeries.Object, 3, EpisodeType.Episode, true);
+        var orphanedData = new Mock<IEpisodeUserData>();
+        orphanedData.SetupGet(value => value.SeriesID).Returns(0);
+        orphanedData.SetupGet(value => value.EpisodeID).Returns(0);
+        orphanedData.SetupGet(value => value.Series).Throws(new InvalidOperationException("Series ID 0"));
         var watchedRating = SeriesData(watchedSeries.Object, 7.5);
         var ratedOnly = SeriesData(ratedSeries.Object, 8.5);
         var users = new Mock<IUserService>();
         users.Setup(service => service.GetUserByUsername("alice")).Returns(user);
         var data = new Mock<IUserDataService>();
-        data.Setup(service => service.GetEpisodeUserDataForUser(user)).Returns([episodeData]);
+        data.Setup(service => service.GetEpisodeUserDataForUser(user)).Returns([orphanedData.Object, episodeData]);
         data.Setup(service => service.GetSeriesUserDataForUser(user)).Returns([watchedRating, ratedOnly]);
         var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
-        var reader = new ShokoStateReader(users.Object, data.Object, metadata.Object);
+        metadata.Setup(service => service.GetShokoSeriesByID(9)).Returns(watchedSeries.Object);
+        metadata.Setup(service => service.GetShokoSeriesByID(10)).Returns(ratedSeries.Object);
+        var reader = new ShokoStateReader(users.Object, data.Object, metadata.Object,
+            NullLogger<ShokoStateReader>.Instance);
 
         var states = await reader.GetLibraryStateAsync("alice", default);
 
@@ -62,6 +69,7 @@ public sealed class ShokoHostAdapterTests
             state.Progress == 0 && state.RatingRaw == 85);
         watchedSeries.Verify(series => series.GetUserData(It.IsAny<IUser>()), Times.Never);
         ratedSeries.Verify(series => series.GetUserData(It.IsAny<IUser>()), Times.Never);
+        orphanedData.VerifyGet(data => data.Series, Times.Never);
         metadata.Verify(service => service.GetAllShokoSeries(), Times.Never);
     }
 
@@ -153,6 +161,7 @@ public sealed class ShokoHostAdapterTests
         var data = new Mock<IEpisodeUserData>();
         data.SetupGet(value => value.Series).Returns(series);
         data.SetupGet(value => value.SeriesID).Returns(series.ID);
+        data.SetupGet(value => value.EpisodeID).Returns(1_000 + number);
         data.SetupGet(value => value.Episode).Returns(Episode(series, number, type).Object);
         data.SetupGet(value => value.LastPlayedAt).Returns(watched ? new DateTime(2026, 1, 1) : null);
         return data.Object;

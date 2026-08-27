@@ -4,13 +4,15 @@ using Shoko.Abstractions.Metadata.Services;
 using Shoko.Abstractions.Metadata.Shoko;
 using Shoko.Abstractions.User;
 using Shoko.Abstractions.User.Services;
+using Microsoft.Extensions.Logging;
 
 namespace AniSync.Next.Host;
 
 internal sealed class ShokoStateReader(
     IUserService userService,
     IUserDataService userDataService,
-    IMetadataService metadataService) : IShokoStateReader
+    IMetadataService metadataService,
+    ILogger<ShokoStateReader> logger) : IShokoStateReader
 {
     public Task<ShokoSeriesState?> GetSeriesStateAsync(
         string shokoUsername,
@@ -24,7 +26,7 @@ internal sealed class ShokoStateReader(
             return Task.FromResult<ShokoSeriesState?>(null);
 
         var episodeData = userDataService.GetEpisodeUserDataForUser(user)
-            .Where(data => data.SeriesID == seriesId)
+            .Where(data => data.SeriesID == seriesId && data.EpisodeID > 0)
             .ToArray();
         var rating = userDataService.GetSeriesUserDataForUser(user)
             .FirstOrDefault(data => data.SeriesID == seriesId)
@@ -40,15 +42,30 @@ internal sealed class ShokoStateReader(
         var user = userService.GetUserByUsername(shokoUsername);
         if (user is null) return Task.FromResult<IReadOnlyList<ShokoSeriesState>>([]);
 
-        var seriesData = userDataService.GetSeriesUserDataForUser(user)
+        var allSeriesData = userDataService.GetSeriesUserDataForUser(user).ToArray();
+        var seriesData = allSeriesData
+            .Where(data => data.SeriesID > 0)
             .GroupBy(data => data.SeriesID)
             .ToDictionary(group => group.Key, group => group.First());
-        var episodeStates = userDataService.GetEpisodeUserDataForUser(user)
-            .Where(data => data.Series is not null)
+        var allEpisodeData = userDataService.GetEpisodeUserDataForUser(user).ToArray();
+        var invalidRowCount = allSeriesData.Count(data => data.SeriesID <= 0) +
+            allEpisodeData.Count(data => data.SeriesID <= 0 || data.EpisodeID <= 0);
+        if (invalidRowCount > 0)
+            logger.LogWarning(
+                "Skipped {Count} orphaned Shoko user-data rows with invalid series or episode IDs while refreshing {Username}",
+                invalidRowCount, shokoUsername);
+
+        var episodeStates = allEpisodeData
+            .Where(data => data.SeriesID > 0 && data.EpisodeID > 0)
             .GroupBy(data => data.SeriesID)
-            .Where(group => user.IsAllowedToSee(group.First().Series!))
-            .Select(group => BuildState(shokoUsername, group.First().Series!, group,
-                seriesData.GetValueOrDefault(group.Key)?.UserRating))
+            .Select(group => new
+            {
+                Series = metadataService.GetShokoSeriesByID(group.Key),
+                EpisodeData = group.AsEnumerable(),
+                Rating = seriesData.GetValueOrDefault(group.Key)?.UserRating,
+            })
+            .Where(group => group.Series is not null && user.IsAllowedToSee(group.Series))
+            .Select(group => BuildState(shokoUsername, group.Series!, group.EpisodeData, group.Rating))
             .ToDictionary(state => state.SeriesId);
 
         // Episode user-data rows survive an unwatch, so their series remain in
@@ -56,10 +73,11 @@ internal sealed class ShokoStateReader(
         // rated series even when the user has never watched an episode. Read
         // the existing rows rather than IShokoSeries.GetUserData(), which
         // creates a row and must not be called while building a preview.
-        foreach (var data in seriesData.Values.Where(data => data.UserRating.HasValue && data.Series is not null))
+        foreach (var data in seriesData.Values.Where(data => data.UserRating.HasValue))
         {
-            var series = data.Series!;
-            if (episodeStates.ContainsKey(series.ID) || !user.IsAllowedToSee(series)) continue;
+            if (episodeStates.ContainsKey(data.SeriesID)) continue;
+            var series = metadataService.GetShokoSeriesByID(data.SeriesID);
+            if (series is null || !user.IsAllowedToSee(series)) continue;
             episodeStates[series.ID] = BuildState(shokoUsername, series, [], data.UserRating);
         }
 

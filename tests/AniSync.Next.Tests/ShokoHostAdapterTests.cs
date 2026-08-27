@@ -1,4 +1,5 @@
 using AniSync.Next.Host;
+using AniSync.Next.Domain;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -17,11 +18,7 @@ public sealed class ShokoHostAdapterTests
     [Fact]
     public void SeriesStateUsesHighestCurrentlyWatchedNormalEpisodeAndCanonicalRating()
     {
-        var user = new Mock<IUser>();
-        var seriesUserData = new Mock<ISeriesUserData>();
-        seriesUserData.SetupGet(data => data.UserRating).Returns(8.45);
         var series = Series(9, 100, "Series", 12);
-        series.Setup(value => value.GetUserData(user.Object)).Returns(seriesUserData.Object);
         var rows = new[]
         {
             EpisodeData(series.Object, 2, EpisodeType.Episode, watched: true),
@@ -30,13 +27,42 @@ public sealed class ShokoHostAdapterTests
             EpisodeData(series.Object, 20, EpisodeType.Special, watched: true),
         };
 
-        var state = ShokoStateReader.BuildState("alice", user.Object, series.Object, rows);
+        var state = ShokoStateReader.BuildState("alice", series.Object, rows, 8.45);
 
         state.Progress.Should().Be(7);
         state.TotalEpisodes.Should().Be(12);
         state.RatingRaw.Should().Be(85);
         state.SeriesId.Should().Be(9);
         state.AniDbAnimeId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task LibraryPreviewReadsExistingRatingsWithoutCreatingSeriesUserData()
+    {
+        var user = User("alice");
+        var watchedSeries = Series(9, 100, "Watched", 12);
+        var ratedSeries = Series(10, 101, "Rated", 24);
+        var episodeData = EpisodeData(watchedSeries.Object, 3, EpisodeType.Episode, true);
+        var watchedRating = SeriesData(watchedSeries.Object, 7.5);
+        var ratedOnly = SeriesData(ratedSeries.Object, 8.5);
+        var users = new Mock<IUserService>();
+        users.Setup(service => service.GetUserByUsername("alice")).Returns(user);
+        var data = new Mock<IUserDataService>();
+        data.Setup(service => service.GetEpisodeUserDataForUser(user)).Returns([episodeData]);
+        data.Setup(service => service.GetSeriesUserDataForUser(user)).Returns([watchedRating, ratedOnly]);
+        var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
+        var reader = new ShokoStateReader(users.Object, data.Object, metadata.Object);
+
+        var states = await reader.GetLibraryStateAsync("alice", default);
+
+        states.Should().HaveCount(2);
+        states.Single(state => state.SeriesId == 9).Should().Match<ShokoSeriesState>(state =>
+            state.Progress == 3 && state.RatingRaw == 75);
+        states.Single(state => state.SeriesId == 10).Should().Match<ShokoSeriesState>(state =>
+            state.Progress == 0 && state.RatingRaw == 85);
+        watchedSeries.Verify(series => series.GetUserData(It.IsAny<IUser>()), Times.Never);
+        ratedSeries.Verify(series => series.GetUserData(It.IsAny<IUser>()), Times.Never);
+        metadata.Verify(service => service.GetAllShokoSeries(), Times.Never);
     }
 
     [Fact]
@@ -89,7 +115,17 @@ public sealed class ShokoHostAdapterTests
     {
         var user = new Mock<IUser>();
         user.SetupGet(value => value.Username).Returns(username);
+        user.Setup(value => value.IsAllowedToSee(It.IsAny<IShokoSeries>())).Returns(true);
         return user.Object;
+    }
+
+    private static ISeriesUserData SeriesData(IShokoSeries series, double? rating)
+    {
+        var data = new Mock<ISeriesUserData>();
+        data.SetupGet(value => value.SeriesID).Returns(series.ID);
+        data.SetupGet(value => value.Series).Returns(series);
+        data.SetupGet(value => value.UserRating).Returns(rating);
+        return data.Object;
     }
 
     private static Mock<IShokoSeries> Series(int id, int aniDbId, string title, int episodeCount)

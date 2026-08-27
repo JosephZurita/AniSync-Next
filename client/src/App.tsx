@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api, json } from './api'
 import { defaultSelected } from './review-selection'
-import type { ClientSettings, Mapping, PlannedChange, ProviderKey, ReviewItem, SearchResult, Session, SettingsResponse, SyncOutcome, UserSettings } from './types'
+import type { ClientSettings, Mapping, PlannedChange, ProviderKey, ReviewItem, ReviewRefreshResult, SearchResult, Session, SettingsResponse, SyncOutcome, UserSettings } from './types'
 
 function useRemote<T>(path: string) {
   const [data, setData] = useState<T>()
@@ -62,13 +62,19 @@ function Review() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [refreshFailed, setRefreshFailed] = useState(false)
   const refresh = async () => {
-    setBusy(true); setMessage('')
+    setBusy(true); setMessage(''); setRefreshFailed(false)
     try {
-      const items = await api<ReviewItem[]>('/review/refresh', { method: 'POST' })
-      remote.setData(items); setSelected(defaultSelected(items))
-      setMessage(items.length ? 'Preview refreshed from current Shoko and provider state.' : 'Everything is in sync.')
-    } catch (value) { setMessage(asMessage(value)) } finally { setBusy(false) }
+      const result = await api<ReviewRefreshResult>('/review/refresh', { method: 'POST' })
+      remote.setData(result.items); setSelected(defaultSelected(result.items))
+      if (result.failures.length) {
+        setRefreshFailed(true)
+        setMessage(result.failures.map(failure => `${prettyProvider(failure.provider)}: ${failure.error}`).join(' '))
+      } else {
+        setMessage(result.items.length ? 'Preview refreshed from current Shoko and provider state.' : 'Everything is in sync.')
+      }
+    } catch (value) { setRefreshFailed(true); setMessage(asMessage(value)) } finally { setBusy(false) }
   }
   const apply = async () => {
     setBusy(true); setMessage('')
@@ -80,7 +86,7 @@ function Review() {
   const groups = useMemo(() => groupBySeries(remote.data ?? []), [remote.data])
   return <Page title="Review" subtitle="Only differences that still need action are shown."
     action={<button onClick={() => void refresh()} disabled={busy}>Refresh from Shoko</button>}>
-    {(remote.error || message) && <div className="notice">{remote.error || message}</div>}
+    {(remote.error || message) && <div className={`notice ${remote.error || refreshFailed ? 'error' : ''}`}>{remote.error || message}</div>}
     {remote.loading ? <Empty text="Loading current preview…" /> : groups.length === 0 ? <Empty text="No pending changes. Refresh whenever Shoko watch state changes." /> :
       <div className="review-list">{groups.map(group => <section className="panel review-group" key={group.seriesId}>
         <div className="series-title"><div><h2>{group.title}</h2><small>AniDB {group.aniDbAnimeId}</small></div></div>

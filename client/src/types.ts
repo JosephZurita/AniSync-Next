@@ -64,6 +64,18 @@ export interface ReviewItem {
   error?: string
 }
 
+export interface ProviderRefreshFailure {
+  provider: ProviderKey
+  error: string
+  isTransient: boolean
+  retryAfterSeconds?: number
+}
+
+export interface ReviewRefreshResult {
+  items: ReviewItem[]
+  failures: ProviderRefreshFailure[]
+}
+
 export interface Mapping {
   aniDbAnimeId: number
   provider: ProviderKey

@@ -62,7 +62,7 @@ test('dashboard loads and review defaults only safe changes', async ({ page }) =
       applied = (request.postDataJSON() as { ids: string[] }).ids
       return route.fulfill({ json: [] })
     }
-    if (path.endsWith('/review/refresh')) return route.fulfill({ json: reviews })
+    if (path.endsWith('/review/refresh')) return route.fulfill({ json: { items: reviews, failures: [] } })
     if (path.endsWith('/review')) return route.fulfill({ json: reviews })
     return route.fulfill({ status: 404, json: { error: 'not mocked' } })
   })
@@ -86,4 +86,27 @@ test('dashboard loads and review defaults only safe changes', async ({ page }) =
   await page.getByRole('link', { name: 'Settings' }).click()
   await page.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect.poll(() => authorizeBaseUrl).toBe('http://127.0.0.1:4173')
+})
+
+test('refresh keeps successful previews and displays a provider failure', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('apiSession', JSON.stringify({ apikey: 'browser-session-key' }))
+  })
+  await page.route('**/anisync-next/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ json: session })
+    if (path.endsWith('/review/refresh')) return route.fulfill({ json: {
+      items: [reviews[0]],
+      failures: [{ provider: 'MyAnimeList', error: 'Reconnect required.', isTransient: false }],
+    } })
+    if (path.endsWith('/review')) return route.fulfill({ json: reviews })
+    return route.fulfill({ status: 404, json: { error: 'not mocked' } })
+  })
+
+  await page.goto('/anisync-next/review')
+  await page.getByRole('button', { name: 'Refresh from Shoko' }).click()
+
+  await expect(page.getByText('MyAnimeList: Reconnect required.')).toBeVisible()
+  await expect(page.getByText('Safe Series')).toBeVisible()
+  await expect(page.getByText('Decrease Series')).not.toBeVisible()
 })

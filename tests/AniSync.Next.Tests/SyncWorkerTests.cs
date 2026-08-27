@@ -60,7 +60,7 @@ public sealed class SyncWorkerTests
             Calls.Add((username, seriesId));
             return Task.CompletedTask;
         }
-        public Task<IReadOnlyList<ReviewItem>> RefreshAsync(string username, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ReviewRefreshResult> RefreshAsync(string username, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IReadOnlyList<SyncOutcome>> ApplyAsync(string username, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

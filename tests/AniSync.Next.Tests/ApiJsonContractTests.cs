@@ -47,6 +47,9 @@ public sealed class ApiJsonContractTests
             new ProviderMapping("alice", 4, ProviderKey.MyAnimeList, 5, "Title", true, DateTimeOffset.UtcNow),
             new PersistedSyncTrigger(Guid.NewGuid(), "alice", 3, "watch", DateTimeOffset.UtcNow),
             new ProviderMediaSearchResult(ProviderKey.MyAnimeList, 5, "Title", 12, 2026, null),
+            new ReviewRefreshResult(
+                [new ReviewItem(change.Id, change, DateTimeOffset.UtcNow)],
+                [new ProviderRefreshFailure(ProviderKey.MyAnimeList, "Reconnect required.", false)]),
         };
 
         foreach (var payload in payloads)
@@ -60,6 +63,10 @@ public sealed class ApiJsonContractTests
         review["change"]!["provider"]!.Value<string>().Should().Be("MyAnimeList");
         review["change"]!["kind"]!.Value<string>().Should().Be("Decrease");
         review["change"]!["reviewReason"]!.Value<string>().Should().Be("ProgressDecrease");
+
+        var refresh = JObject.Parse(JsonConvert.SerializeObject(payloads[^1], ShokoJsonSettings));
+        refresh["failures"]![0]!["provider"]!.Value<string>().Should().Be("MyAnimeList");
+        refresh["failures"]![0]!["isTransient"]!.Value<bool>().Should().BeFalse();
     }
 
     [Fact]

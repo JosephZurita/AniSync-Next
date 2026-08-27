@@ -18,12 +18,12 @@ public sealed class SyncCoordinatorTests
         var setup = Create(directory.Path, source, provider);
 
         var watched = await setup.Coordinator.RefreshAsync("alice", default);
-        watched.Should().ContainSingle().Which.Change.Kind.Should().Be(ChangeKind.Advance);
+        watched.Items.Should().ContainSingle().Which.Change.Kind.Should().Be(ChangeKind.Advance);
 
         source.Current = State(2);
         var unwatched = await setup.Coordinator.RefreshAsync("alice", default);
 
-        unwatched.Should().BeEmpty("the provider and fresh Shoko state now agree");
+        unwatched.Items.Should().BeEmpty("the provider and fresh Shoko state now agree");
         (await setup.Store.GetForUserAsync("alice", default)).Should().BeEmpty("stale preview rows are replaced");
     }
 
@@ -37,7 +37,7 @@ public sealed class SyncCoordinatorTests
         var preview = await setup.Coordinator.RefreshAsync("alice", default);
         source.Current = State(6);
 
-        var action = () => setup.Coordinator.ApplyAsync("alice", [preview.Single().Id], default);
+        var action = () => setup.Coordinator.ApplyAsync("alice", [preview.Items.Single().Id], default);
 
         await action.Should().ThrowAsync<StalePreviewException>()
             .WithMessage("*changed after the preview*");
@@ -76,13 +76,62 @@ public sealed class SyncCoordinatorTests
         var registry = new ProviderRegistry([mal, aniList]);
         var clock = new FixedClock();
         var coordinator = new SyncCoordinator(source, new AllMappings(), registry, new SyncPlanner(),
-            new SyncExecutor(registry, store, clock), store, config, clock);
+            new SyncExecutor(registry, store, clock), store, config, clock, NullLogger<SyncCoordinator>.Instance);
 
         var action = () => coordinator.ProcessSeriesAsync("alice", 1, default);
 
         await action.Should().ThrowAsync<ProviderException>().Where(error => error.IsTransient);
         mal.Applied.Should().ContainSingle();
         aniList.Applied.Should().ContainSingle("providers are failure-isolated within a trigger");
+    }
+
+    [Fact]
+    public async Task RefreshReportsOneProviderFailureAndStillPreviewsTheOtherProvider()
+    {
+        using var directory = new TestDirectory();
+        var store = new JsonPluginStateStore(directory.Path, NullLogger<JsonPluginStateStore>.Instance);
+        var source = new MutableShokoReader(State(5));
+        var mal = new FakeProvider(ProviderState(2) with { Provider = ProviderKey.MyAnimeList })
+        {
+            ListFailure = new ProviderException("MyAnimeList must be reconnected.", false),
+        };
+        var aniList = new FakeProvider(ProviderState(2));
+        var config = new FakeConfiguration();
+        config.SaveAuthorization("alice", ProviderKey.MyAnimeList, new ProviderAuthorization { AccessToken = "mal" });
+        config.SaveAuthorization("alice", ProviderKey.AniList, new ProviderAuthorization { AccessToken = "al" });
+        var registry = new ProviderRegistry([mal, aniList]);
+        var clock = new FixedClock();
+        var coordinator = new SyncCoordinator(source, new AllMappings(), registry, new SyncPlanner(),
+            new SyncExecutor(registry, store, clock), store, config, clock, NullLogger<SyncCoordinator>.Instance);
+
+        var result = await coordinator.RefreshAsync("alice", default);
+
+        result.Items.Should().ContainSingle().Which.Change.Provider.Should().Be(ProviderKey.AniList);
+        result.Failures.Should().ContainSingle().Which.Should().BeEquivalentTo(new
+        {
+            Provider = ProviderKey.MyAnimeList,
+            Error = "MyAnimeList must be reconnected.",
+            IsTransient = false,
+        });
+        (await store.GetForUserAsync("alice", default)).Should().ContainSingle()
+            .Which.Change.Provider.Should().Be(ProviderKey.AniList);
+    }
+
+    [Fact]
+    public async Task RefreshContainsUnexpectedProviderPayloadFailures()
+    {
+        using var directory = new TestDirectory();
+        var provider = new FakeProvider(ProviderState(2))
+        {
+            ListFailure = new InvalidOperationException("malformed provider payload"),
+        };
+        var setup = Create(directory.Path, new MutableShokoReader(State(5)), provider);
+
+        var result = await setup.Coordinator.RefreshAsync("alice", default);
+
+        result.Items.Should().BeEmpty();
+        result.Failures.Should().ContainSingle().Which.Error.Should()
+            .Be("AniList returned an unexpected response. Check the Shoko logs for details.");
     }
 
     private static Setup Create(string path, MutableShokoReader reader, FakeProvider provider)
@@ -95,7 +144,8 @@ public sealed class SyncCoordinatorTests
         var clock = new FixedClock();
         var mappings = new FixedMappings(provider.Key);
         var executor = new SyncExecutor(registry, store, clock);
-        var coordinator = new SyncCoordinator(reader, mappings, registry, planner, executor, store, config, clock);
+        var coordinator = new SyncCoordinator(reader, mappings, registry, planner, executor, store, config, clock,
+            NullLogger<SyncCoordinator>.Instance);
         return new Setup(coordinator, store);
     }
 
@@ -137,8 +187,12 @@ public sealed class SyncCoordinatorTests
         public ProviderKey Key => state.Provider;
         public List<PlannedChange> Applied { get; } = [];
         public ProviderException? Failure { get; init; }
+        public Exception? ListFailure { get; init; }
         public Task<ProviderAccount?> GetAccountAsync(string shokoUsername, CancellationToken cancellationToken) => Task.FromResult<ProviderAccount?>(new(1, "remote"));
-        public Task<IReadOnlyDictionary<int, ProviderListState>> GetListAsync(string shokoUsername, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyDictionary<int, ProviderListState>>(new Dictionary<int, ProviderListState> { [state.MediaId] = state });
+        public Task<IReadOnlyDictionary<int, ProviderListState>> GetListAsync(string shokoUsername, CancellationToken cancellationToken) =>
+            ListFailure is not null
+                ? Task.FromException<IReadOnlyDictionary<int, ProviderListState>>(ListFailure)
+                : Task.FromResult<IReadOnlyDictionary<int, ProviderListState>>(new Dictionary<int, ProviderListState> { [state.MediaId] = state });
         public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken) => Task.FromResult<ProviderListState?>(state);
         public Task<IReadOnlyList<ProviderMediaSearchResult>> SearchAsync(string shokoUsername, string query, bool includeAdult, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProviderMediaSearchResult>>([]);
         public Task<ProviderListState> ApplyAsync(string shokoUsername, PlannedChange change, CancellationToken cancellationToken)

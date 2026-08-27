@@ -24,8 +24,12 @@ internal sealed class ShokoStateReader(
             return Task.FromResult<ShokoSeriesState?>(null);
 
         var episodeData = userDataService.GetEpisodeUserDataForUser(user)
-            .Where(data => data.SeriesID == seriesId);
-        return Task.FromResult<ShokoSeriesState?>(BuildState(shokoUsername, user, series, episodeData));
+            .Where(data => data.SeriesID == seriesId)
+            .ToArray();
+        var rating = userDataService.GetSeriesUserDataForUser(user)
+            .FirstOrDefault(data => data.SeriesID == seriesId)
+            ?.UserRating;
+        return Task.FromResult<ShokoSeriesState?>(BuildState(shokoUsername, series, episodeData, rating));
     }
 
     public Task<IReadOnlyList<ShokoSeriesState>> GetLibraryStateAsync(
@@ -36,20 +40,27 @@ internal sealed class ShokoStateReader(
         var user = userService.GetUserByUsername(shokoUsername);
         if (user is null) return Task.FromResult<IReadOnlyList<ShokoSeriesState>>([]);
 
+        var seriesData = userDataService.GetSeriesUserDataForUser(user)
+            .GroupBy(data => data.SeriesID)
+            .ToDictionary(group => group.Key, group => group.First());
         var episodeStates = userDataService.GetEpisodeUserDataForUser(user)
             .Where(data => data.Series is not null)
             .GroupBy(data => data.SeriesID)
             .Where(group => user.IsAllowedToSee(group.First().Series!))
-            .Select(group => BuildState(shokoUsername, user, group.First().Series!, group))
+            .Select(group => BuildState(shokoUsername, group.First().Series!, group,
+                seriesData.GetValueOrDefault(group.Key)?.UserRating))
             .ToDictionary(state => state.SeriesId);
 
         // Episode user-data rows survive an unwatch, so their series remain in
         // the refresh set and can produce a decrease review. Add separately
-        // rated series even when the user has never watched an episode.
-        foreach (var series in metadataService.GetAllShokoSeries().Where(user.IsAllowedToSee))
+        // rated series even when the user has never watched an episode. Read
+        // the existing rows rather than IShokoSeries.GetUserData(), which
+        // creates a row and must not be called while building a preview.
+        foreach (var data in seriesData.Values.Where(data => data.UserRating.HasValue && data.Series is not null))
         {
-            if (episodeStates.ContainsKey(series.ID) || !series.GetUserData(user).UserRating.HasValue) continue;
-            episodeStates[series.ID] = BuildState(shokoUsername, user, series, []);
+            var series = data.Series!;
+            if (episodeStates.ContainsKey(series.ID) || !user.IsAllowedToSee(series)) continue;
+            episodeStates[series.ID] = BuildState(shokoUsername, series, [], data.UserRating);
         }
 
         var states = episodeStates.Values
@@ -61,9 +72,9 @@ internal sealed class ShokoStateReader(
 
     internal static ShokoSeriesState BuildState(
         string shokoUsername,
-        IUser user,
         IShokoSeries series,
-        IEnumerable<IEpisodeUserData> episodeData)
+        IEnumerable<IEpisodeUserData> episodeData,
+        double? userRating)
     {
         var progress = episodeData
             .Where(data => data.LastPlayedAt.HasValue && data.Episode is
@@ -75,9 +86,8 @@ internal sealed class ShokoStateReader(
             .DefaultIfEmpty(0)
             .Max();
 
-        var rating = series.GetUserData(user).UserRating;
-        var ratingRaw = rating.HasValue
-            ? (int?)Math.Clamp((int)Math.Round(rating.Value * 10, MidpointRounding.AwayFromZero), 0, 100)
+        var ratingRaw = userRating.HasValue && double.IsFinite(userRating.Value)
+            ? (int?)Math.Clamp((int)Math.Round(userRating.Value * 10, MidpointRounding.AwayFromZero), 0, 100)
             : null;
 
         return new ShokoSeriesState(

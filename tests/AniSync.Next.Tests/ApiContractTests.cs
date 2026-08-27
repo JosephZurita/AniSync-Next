@@ -84,6 +84,22 @@ public sealed class ApiContractTests
     }
 
     [Fact]
+    public async Task RefreshReturnsProviderFailuresAsTypedResultsInsteadOfServerErrors()
+    {
+        using var directory = new TestDirectory();
+        var coordinator = new Mock<ISyncCoordinator>();
+        var expected = new ReviewRefreshResult([],
+            [new ProviderRefreshFailure(ProviderKey.AniList, "Reconnect required.", false)]);
+        coordinator.Setup(service => service.RefreshAsync("alice", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+        var controller = Controller(directory.Path, User("alice", false), coordinator: coordinator.Object);
+
+        var result = await controller.RefreshReview(default);
+
+        result.Result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(expected);
+    }
+
+    [Fact]
     public void OAuthUsesValidatedBrowserOriginBehindTlsTerminatingProxy()
     {
         var context = new DefaultHttpContext();

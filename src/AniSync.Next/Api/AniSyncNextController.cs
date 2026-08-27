@@ -120,7 +120,7 @@ public sealed class AniSyncNextController(
     }
 
     [HttpPost("api/review/refresh")]
-    public async Task<ActionResult<IReadOnlyList<ReviewItem>>> RefreshReview(CancellationToken cancellationToken)
+    public async Task<ActionResult<ReviewRefreshResult>> RefreshReview(CancellationToken cancellationToken)
     {
         var username = CurrentUsername();
         if (username is null) return Unauthorized(new ApiError("Authentication required."));

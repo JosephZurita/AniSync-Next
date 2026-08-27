@@ -67,6 +67,18 @@ public sealed record ReviewItem(
     int AttemptCount = 0);
 
 [JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
+public sealed record ProviderRefreshFailure(
+    ProviderKey Provider,
+    string Error,
+    bool IsTransient,
+    int? RetryAfterSeconds = null);
+
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
+public sealed record ReviewRefreshResult(
+    IReadOnlyList<ReviewItem> Items,
+    IReadOnlyList<ProviderRefreshFailure> Failures);
+
+[JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
 public sealed record SyncOutcome(
     SyncOutcomeKind Kind,
     PlannedChange Change,

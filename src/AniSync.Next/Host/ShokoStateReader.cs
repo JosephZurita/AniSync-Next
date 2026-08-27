@@ -29,13 +29,8 @@ internal sealed class ShokoStateReader(
         var episodeData = userDataService.GetEpisodeUserDataForUser(user)
             .Where(data => data.SeriesID == seriesId && data.EpisodeID > 0)
             .ToArray();
-        var linkedVideoIds = series.Episodes
-            .SelectMany(episode => episode.VideoList ?? [])
-            .Where(video => video.ID > 0)
-            .Select(video => video.ID)
-            .ToHashSet();
         var videoData = userDataService.GetVideoUserDataForUser(user)
-            .Where(data => linkedVideoIds.Contains(data.VideoID))
+            .Where(data => data.VideoID > 0 && GetLinkedSeriesIds(data).Contains(seriesId))
             .ToArray();
         var seriesData = userDataService.GetSeriesUserDataForUser(user)
             .FirstOrDefault(data => data.SeriesID == seriesId);

@@ -288,7 +288,6 @@ public sealed class ShokoHostAdapterTests
         var video = new Mock<IVideo>();
         video.SetupGet(value => value.ID).Returns(200);
         video.SetupGet(value => value.Episodes).Returns([episode2.Object]);
-        episode2.SetupGet(value => value.VideoList).Returns([video.Object]);
         SetEpisodes(series, episode1, episode2);
         var videoData = new Mock<IVideoUserData>();
         videoData.SetupGet(value => value.VideoID).Returns(200);

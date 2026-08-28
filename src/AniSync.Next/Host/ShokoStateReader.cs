@@ -26,9 +26,9 @@ internal sealed class ShokoStateReader(
         if (user is null || series is null || !user.IsAllowedToSee(series))
             return Task.FromResult<ShokoSeriesState?>(null);
 
-        var episodeData = userDataService.GetEpisodeUserDataForUser(user)
-            .Where(data => data.SeriesID == seriesId && data.EpisodeID > 0)
-            .ToArray();
+        var episodeResolution = ResolveEpisodeData(userDataService.GetEpisodeUserDataForUser(user));
+        WriteEpisodeResolutionDiagnostics(shokoUsername, episodeResolution, seriesId);
+        var episodeData = episodeResolution.RowsBySeries.GetValueOrDefault(seriesId) ?? [];
         var videoData = userDataService.GetVideoUserDataForUser(user)
             .Where(data => data.VideoID > 0 && GetLinkedSeriesIds(data).Contains(seriesId))
             .ToArray();
@@ -36,7 +36,8 @@ internal sealed class ShokoStateReader(
             .FirstOrDefault(data => data.SeriesID == seriesId);
 
         return Task.FromResult<ShokoSeriesState?>(BuildStateWithDiagnostics(
-            shokoUsername, series, episodeData, videoData, seriesData));
+            shokoUsername, series, episodeData, videoData, seriesData,
+            episodeResolution.RecoveredRowsBySeries.GetValueOrDefault(seriesId)));
     }
 
     public Task<IReadOnlyList<ShokoSeriesState>> GetLibraryStateAsync(
@@ -53,18 +54,17 @@ internal sealed class ShokoStateReader(
             .GroupBy(data => data.SeriesID)
             .ToDictionary(group => group.Key, group => group.First());
         var allEpisodeData = userDataService.GetEpisodeUserDataForUser(user).ToArray();
-        var episodeData = allEpisodeData
-            .Where(data => data.SeriesID > 0 && data.EpisodeID > 0)
-            .GroupBy(data => data.SeriesID)
-            .ToDictionary(group => group.Key, group => group.AsEnumerable());
+        var episodeResolution = ResolveEpisodeData(allEpisodeData);
+        WriteEpisodeResolutionDiagnostics(shokoUsername, episodeResolution);
+        var episodeData = episodeResolution.RowsBySeries;
         var allVideoData = userDataService.GetVideoUserDataForUser(user).ToArray();
         var videoData = GroupVideoDataBySeries(allVideoData);
         var invalidRowCount = allSeriesData.Count(data => data.SeriesID <= 0) +
-            allEpisodeData.Count(data => data.SeriesID <= 0 || data.EpisodeID <= 0) +
+            episodeResolution.UnresolvedRowCount +
             allVideoData.Count(data => data.VideoID <= 0);
         if (invalidRowCount > 0)
             logger.LogWarning(
-                "Skipped {Count} orphaned Shoko user-data rows with invalid series, episode, or video IDs while refreshing {Username}",
+                "Skipped {Count} unresolved Shoko user-data rows with invalid IDs or missing metadata while refreshing {Username}",
                 invalidRowCount, shokoUsername);
 
         // Episode user-data rows survive an unwatch, so their series remain in
@@ -90,7 +90,8 @@ internal sealed class ShokoStateReader(
             })
             .Where(group => group.Series is not null && user.IsAllowedToSee(group.Series))
             .Select(group => BuildStateWithDiagnostics(
-                shokoUsername, group.Series!, group.EpisodeData, group.VideoData, group.SeriesData))
+                shokoUsername, group.Series!, group.EpisodeData, group.VideoData, group.SeriesData,
+                episodeResolution.RecoveredRowsBySeries.GetValueOrDefault(group.Series!.ID)))
             .OrderBy(state => state.Title, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(state => state.SeriesId)
             .ToArray();
@@ -111,7 +112,8 @@ internal sealed class ShokoStateReader(
         IShokoSeries series,
         IEnumerable<IEpisodeUserData> episodeData,
         IEnumerable<IVideoUserData> videoData,
-        ISeriesUserData? seriesData)
+        ISeriesUserData? seriesData,
+        int recoveredEpisodeRows)
     {
         var calculation = CalculateState(
             shokoUsername, series, episodeData, videoData, seriesData?.UserRating);
@@ -120,7 +122,9 @@ internal sealed class ShokoStateReader(
             $"seriesId={series.ID} metadataEpisodes={calculation.MetadataEpisodeCount} " +
             $"normalEpisodes={calculation.NormalEpisodeCount} episodeRows={calculation.EpisodeRowCount} " +
             $"resolvedEpisodeRows={calculation.ResolvedEpisodeRowCount} " +
+            $"recoveredEpisodeRows={recoveredEpisodeRows} " +
             $"resolvedWatchedNormalEpisodes={calculation.WatchedNormalEpisodeCount} " +
+            $"resolvedWatchedSpecialEpisodes={calculation.WatchedSpecialEpisodeCount} " +
             $"linkedVideoRows={calculation.VideoRowCount} " +
             $"linkedVideoFallbackEpisodes={calculation.VideoFallbackEpisodeCount} " +
             $"progress={calculation.State.Progress}");
@@ -133,13 +137,16 @@ internal sealed class ShokoStateReader(
                 $"watched={trace.Watched} fallback={trace.IsFallback}");
         }
 
-        if (seriesData is { WatchedEpisodeCount: > 0 } && calculation.WatchedNormalEpisodeCount == 0)
+        var resolvedWatchedCount = calculation.WatchedNormalEpisodeCount + calculation.WatchedSpecialEpisodeCount;
+        if (seriesData is { } && seriesData.WatchedEpisodeCount != resolvedWatchedCount)
         {
             logger.LogWarning(
-                "AniSync Next could not resolve any watched normal episode for Shoko series {SeriesId} and user {Username}, although Shoko reports {ReportedWatchedEpisodes} watched episodes; metadata episodes={MetadataEpisodeCount}, episode rows={EpisodeRowCount}, linked video rows={VideoRowCount}",
+                "AniSync Next resolved watch state differs from Shoko aggregate statistics for series {SeriesId} and user {Username}; aggregate watched episodes or specials={ReportedWatchedEpisodes}, resolved normal={ResolvedNormalEpisodes}, resolved specials={ResolvedSpecialEpisodes}, metadata episodes={MetadataEpisodeCount}, episode rows={EpisodeRowCount}, linked video rows={VideoRowCount}",
                 series.ID,
                 shokoUsername,
                 seriesData.WatchedEpisodeCount,
+                calculation.WatchedNormalEpisodeCount,
+                calculation.WatchedSpecialEpisodeCount,
                 calculation.MetadataEpisodeCount,
                 calculation.EpisodeRowCount,
                 calculation.VideoRowCount);
@@ -166,6 +173,7 @@ internal sealed class ShokoStateReader(
         var episodeRows = episodeData.ToArray();
         var videoRows = videoData.ToArray();
         var watchedEpisodeIds = new HashSet<int>();
+        var watchedSpecialEpisodeIds = new HashSet<int>();
         var videoFallbackEpisodeIds = new HashSet<int>();
         var traceRows = new List<StateTraceRow>();
         var resolvedEpisodeRowCount = 0;
@@ -175,8 +183,13 @@ internal sealed class ShokoStateReader(
             var resolved = episodeIndex.TryGetValue(data.EpisodeID, out var episode);
             if (resolved) resolvedEpisodeRowCount++;
             var watched = data.LastPlayedAt.HasValue;
-            if (resolved && watched && episode!.Type == EpisodeType.Episode && episode.EpisodeNumber > 0)
-                watchedEpisodeIds.Add(episode.ID);
+            if (resolved && watched && episode!.EpisodeNumber > 0)
+            {
+                if (episode.Type == EpisodeType.Episode)
+                    watchedEpisodeIds.Add(episode.ID);
+                else if (episode.Type == EpisodeType.Special)
+                    watchedSpecialEpisodeIds.Add(episode.ID);
+            }
 
             traceRows.Add(CreateTrace("episode", data.EpisodeID, resolved, episode, watched, false));
         }
@@ -193,6 +206,8 @@ internal sealed class ShokoStateReader(
                 var isFallback = resolved && watched && episode!.Type == EpisodeType.Episode &&
                     episode.EpisodeNumber > 0 && watchedEpisodeIds.Add(episode.ID);
                 if (isFallback) videoFallbackEpisodeIds.Add(episode!.ID);
+                if (resolved && watched && episode!.Type == EpisodeType.Special && episode.EpisodeNumber > 0)
+                    watchedSpecialEpisodeIds.Add(episode.ID);
                 traceRows.Add(CreateTrace("video", linkedEpisode.ID, resolved, episode, watched, isFallback));
             }
         }
@@ -221,8 +236,96 @@ internal sealed class ShokoStateReader(
             resolvedEpisodeRowCount,
             videoRows.Length,
             watchedEpisodeIds.Count,
+            watchedSpecialEpisodeIds.Count,
             videoFallbackEpisodeIds.Count,
             traceRows);
+    }
+
+    private EpisodeDataResolution ResolveEpisodeData(IEnumerable<IEpisodeUserData> episodeData)
+    {
+        var grouped = new Dictionary<int, List<IEpisodeUserData>>();
+        var recoveredRowsBySeries = new Dictionary<int, int>();
+        var episodeIndex = new Dictionary<int, IShokoEpisode?>();
+        var traceRows = new List<EpisodeResolutionTrace>();
+        var totalRowCount = 0;
+        var resolvedRowCount = 0;
+        var recoveredRowCount = 0;
+        var unresolvedRowCount = 0;
+
+        foreach (var data in episodeData)
+        {
+            totalRowCount++;
+            IShokoEpisode? episode = null;
+            if (data.EpisodeID > 0)
+            {
+                if (!episodeIndex.TryGetValue(data.EpisodeID, out episode))
+                {
+                    episode = metadataService.GetShokoEpisodeByID(data.EpisodeID);
+                    episodeIndex[data.EpisodeID] = episode;
+                }
+            }
+
+            if (episode is null || episode.SeriesID <= 0)
+            {
+                unresolvedRowCount++;
+                traceRows.Add(new(data.EpisodeID, data.SeriesID, null, false, data.LastPlayedAt.HasValue));
+                continue;
+            }
+
+            resolvedRowCount++;
+            if (!grouped.TryGetValue(episode.SeriesID, out var rows))
+                grouped[episode.SeriesID] = rows = [];
+            rows.Add(data);
+
+            if (data.SeriesID == episode.SeriesID) continue;
+            recoveredRowCount++;
+            recoveredRowsBySeries[episode.SeriesID] = recoveredRowsBySeries.GetValueOrDefault(episode.SeriesID) + 1;
+            traceRows.Add(new(data.EpisodeID, data.SeriesID, episode.SeriesID, true, data.LastPlayedAt.HasValue));
+        }
+
+        return new(
+            grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<IEpisodeUserData>)pair.Value),
+            recoveredRowsBySeries,
+            totalRowCount,
+            resolvedRowCount,
+            recoveredRowCount,
+            unresolvedRowCount,
+            traceRows);
+    }
+
+    private void WriteEpisodeResolutionDiagnostics(
+        string shokoUsername,
+        EpisodeDataResolution resolution,
+        int? seriesId = null)
+    {
+        var traceRows = seriesId.HasValue
+            ? resolution.TraceRows.Where(row =>
+                row.ResolvedSeriesId == seriesId || row.ReportedSeriesId == seriesId).ToArray()
+            : resolution.TraceRows;
+        var resolvedRowCount = seriesId.HasValue
+            ? resolution.RowsBySeries.GetValueOrDefault(seriesId.Value)?.Count ?? 0
+            : resolution.ResolvedRowCount;
+        var recoveredRowCount = seriesId.HasValue
+            ? resolution.RecoveredRowsBySeries.GetValueOrDefault(seriesId.Value)
+            : resolution.RecoveredRowCount;
+        var unresolvedRowCount = seriesId.HasValue
+            ? traceRows.Count(row => row.ResolvedSeriesId is null)
+            : resolution.UnresolvedRowCount;
+        var totalRowCount = seriesId.HasValue
+            ? resolvedRowCount + unresolvedRowCount
+            : resolution.TotalRowCount;
+
+        diagnostics.Write(shokoUsername, Configuration.DiagnosticLogLevel.Detailed, "shoko.episode-resolution",
+            $"scopeSeriesId={(seriesId?.ToString() ?? "all")} rows={totalRowCount} " +
+            $"resolved={resolvedRowCount} recoveredRows={recoveredRowCount} unresolved={unresolvedRowCount}");
+
+        foreach (var trace in traceRows)
+        {
+            diagnostics.Write(shokoUsername, Configuration.DiagnosticLogLevel.Trace, "shoko.episode-resolution-row",
+                $"episodeId={trace.EpisodeId} reportedSeriesId={trace.ReportedSeriesId} " +
+                $"resolvedSeriesId={(trace.ResolvedSeriesId?.ToString() ?? "none")} " +
+                $"recovered={trace.Recovered} watched={trace.Watched}");
+        }
     }
 
     private static StateTraceRow CreateTrace(
@@ -273,8 +376,25 @@ internal sealed class ShokoStateReader(
         int ResolvedEpisodeRowCount,
         int VideoRowCount,
         int WatchedNormalEpisodeCount,
+        int WatchedSpecialEpisodeCount,
         int VideoFallbackEpisodeCount,
         IReadOnlyList<StateTraceRow> TraceRows);
+
+    private sealed record EpisodeDataResolution(
+        IReadOnlyDictionary<int, IReadOnlyList<IEpisodeUserData>> RowsBySeries,
+        IReadOnlyDictionary<int, int> RecoveredRowsBySeries,
+        int TotalRowCount,
+        int ResolvedRowCount,
+        int RecoveredRowCount,
+        int UnresolvedRowCount,
+        IReadOnlyList<EpisodeResolutionTrace> TraceRows);
+
+    private sealed record EpisodeResolutionTrace(
+        int EpisodeId,
+        int ReportedSeriesId,
+        int? ResolvedSeriesId,
+        bool Recovered,
+        bool Watched);
 
     private sealed record StateTraceRow(
         string Source,

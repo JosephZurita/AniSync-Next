@@ -175,6 +175,7 @@ public sealed class ShokoHostAdapterTests
         data.Setup(service => service.GetVideoUserDataForUser(It.IsAny<IUser>())).Returns([]);
         var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
         metadata.Setup(service => service.GetShokoSeriesByID(9)).Returns(series.Object);
+        RegisterEpisodes(metadata, episodes);
         var reader = Reader(users, data, metadata);
 
         var single = await reader.GetSeriesStateAsync("alice", 9, default);
@@ -184,6 +185,135 @@ public sealed class ShokoHostAdapterTests
         single!.Progress.Should().Be(13);
         library.Should().ContainSingle().Which.Progress.Should().Be(13);
         bobSingle!.Progress.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task LibraryRefreshRecoversLegacyRowsByEpisodeIdAndKeepsSpecialOnlySeriesAtZero()
+    {
+        var user = User("alice", 1);
+        var bocchi = Series(165, 16063, "Bocchi the Rock!", 12);
+        var bocchiEpisodes = Enumerable.Range(1, 12)
+            .Select(number => Episode(bocchi.Object, 4_900 + number, number, EpisodeType.Episode))
+            .ToArray();
+        var bocchiSpecial = Episode(bocchi.Object, 4_961, 1, EpisodeType.Special);
+        SetEpisodes(bocchi, bocchiEpisodes.Append(bocchiSpecial).ToArray());
+
+        var eightySix = Series(263, 16172, "86 Eighty-Six", 12);
+        var eightySixEpisodes = Enumerable.Range(1, 12)
+            .Select(number => Episode(eightySix.Object, 6_000 + number, number, EpisodeType.Episode))
+            .ToArray();
+        var eightySixSpecial = Episode(eightySix.Object, 6_100, 1, EpisodeType.Special);
+        SetEpisodes(eightySix, eightySixEpisodes.Append(eightySixSpecial).ToArray());
+
+        var legacyRows = bocchiEpisodes
+            .Select((episode, index) => EpisodeData(
+                bocchi.Object,
+                episode.Object,
+                watched: true,
+                includeNavigation: false,
+                reportedSeriesId: index % 2 == 0 ? 0 : 999))
+            .ToArray();
+        var users = new Mock<IUserService>();
+        users.Setup(service => service.GetUserByUsername("alice")).Returns(user);
+        var data = new Mock<IUserDataService>();
+        data.Setup(service => service.GetEpisodeUserDataForUser(user)).Returns(legacyRows);
+        data.Setup(service => service.GetVideoUserDataForUser(user)).Returns([
+            VideoData(200, watched: true, bocchiSpecial.Object),
+            VideoData(201, watched: true, eightySixSpecial.Object),
+        ]);
+        data.Setup(service => service.GetSeriesUserDataForUser(user)).Returns([
+            SeriesData(bocchi.Object, null, watchedEpisodes: 13),
+            SeriesData(eightySix.Object, null, watchedEpisodes: 1),
+        ]);
+        var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
+        metadata.Setup(service => service.GetShokoSeriesByID(165)).Returns(bocchi.Object);
+        metadata.Setup(service => service.GetShokoSeriesByID(263)).Returns(eightySix.Object);
+        RegisterEpisodes(metadata, bocchiEpisodes);
+        var diagnostics = new RecordingDiagnostics();
+        var logger = new RecordingLogger<ShokoStateReader>();
+        var reader = new ShokoStateReader(users.Object, data.Object, metadata.Object, diagnostics, logger);
+
+        var states = await reader.GetLibraryStateAsync("alice", default);
+
+        states.Single(state => state.SeriesId == 165).Progress.Should().Be(12);
+        states.Single(state => state.SeriesId == 263).Progress.Should().Be(0);
+        diagnostics.Entries.Should().Contain(entry =>
+            entry.EventName == "shoko.episode-resolution" &&
+            entry.Details.Contains("resolved=12") &&
+            entry.Details.Contains("recoveredRows=12") &&
+            entry.Details.Contains("unresolved=0"));
+        diagnostics.Entries.Should().Contain(entry =>
+            entry.EventName == "shoko.state" &&
+            entry.Details.Contains("seriesId=165") &&
+            entry.Details.Contains("recoveredEpisodeRows=12") &&
+            entry.Details.Contains("resolvedWatchedNormalEpisodes=12") &&
+            entry.Details.Contains("resolvedWatchedSpecialEpisodes=1") &&
+            entry.Details.Contains("progress=12"));
+        logger.Messages.Should().NotContain(message => message.Text.Contains("aggregate statistics"));
+
+        var planner = new SyncPlanner();
+        var now = new DateTimeOffset(2026, 8, 28, 0, 0, 0, TimeSpan.Zero);
+        var bocchiPlan = planner.Plan(
+            states.Single(state => state.SeriesId == 165),
+            ProviderKey.MyAnimeList,
+            47917,
+            new(ProviderKey.MyAnimeList, 47917, "Bocchi the Rock!", 12, 12,
+                CanonicalListStatus.Completed, null),
+            "bocchi",
+            now,
+            false,
+            true);
+        var eightySixPlan = planner.Plan(
+            states.Single(state => state.SeriesId == 263),
+            ProviderKey.MyAnimeList,
+            48569,
+            new(ProviderKey.MyAnimeList, 48569, "86 Eighty-Six", 12, 12,
+                CanonicalListStatus.Completed, null),
+            "86",
+            now,
+            false,
+            true);
+
+        bocchiPlan.Kind.Should().Be(ChangeKind.NoChange);
+        eightySixPlan.Kind.Should().Be(ChangeKind.Decrease);
+        eightySixPlan.RequiresReview.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SingleAndLibraryReadsResolveLegacyRowsButHonorExplicitUnwatch()
+    {
+        var user = User("alice", 1);
+        var series = Series(9, 100, "Series", 5);
+        var episodes = Enumerable.Range(1, 5)
+            .Select(number => Episode(series.Object, 1_000 + number, number, EpisodeType.Episode))
+            .ToArray();
+        SetEpisodes(series, episodes);
+        var rows = episodes
+            .Select((episode, index) => EpisodeData(
+                series.Object,
+                episode.Object,
+                watched: index < 4,
+                includeNavigation: false,
+                playbackCount: index == 4 ? 5 : 0,
+                reportedSeriesId: 0))
+            .ToArray();
+        var users = new Mock<IUserService>();
+        users.Setup(service => service.GetUserByUsername("alice")).Returns(user);
+        var data = new Mock<IUserDataService>();
+        data.Setup(service => service.GetEpisodeUserDataForUser(user)).Returns(rows);
+        data.Setup(service => service.GetVideoUserDataForUser(user)).Returns([]);
+        data.Setup(service => service.GetSeriesUserDataForUser(user))
+            .Returns([SeriesData(series.Object, null, watchedEpisodes: 4)]);
+        var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
+        metadata.Setup(service => service.GetShokoSeriesByID(9)).Returns(series.Object);
+        RegisterEpisodes(metadata, episodes);
+        var reader = Reader(users, data, metadata);
+
+        var single = await reader.GetSeriesStateAsync("alice", 9, default);
+        var library = await reader.GetLibraryStateAsync("alice", default);
+
+        single!.Progress.Should().Be(4);
+        library.Should().ContainSingle().Which.Progress.Should().Be(4);
     }
 
     [Fact]
@@ -215,6 +345,7 @@ public sealed class ShokoHostAdapterTests
         metadata.Setup(service => service.GetShokoSeriesByID(9)).Returns(watchedSeries.Object);
         metadata.Setup(service => service.GetShokoSeriesByID(10)).Returns(ratedSeries.Object);
         metadata.Setup(service => service.GetShokoSeriesByID(11)).Returns(videoSeries.Object);
+        RegisterEpisodes(metadata, watchedEpisode);
         var reader = Reader(users, data, metadata);
 
         var states = await reader.GetLibraryStateAsync("alice", default);
@@ -268,9 +399,10 @@ public sealed class ShokoHostAdapterTests
             entry.Details.Contains("progress=0"));
         diagnostics.Entries.Should().Contain(entry =>
             entry.Level == DiagnosticLogLevel.Trace &&
-            entry.EventName == "shoko.episode-state" &&
+            entry.EventName == "shoko.episode-resolution-row" &&
             entry.Details.Contains("episodeId=9999") &&
-            entry.Details.Contains("resolved=False") &&
+            entry.Details.Contains("resolvedSeriesId=none") &&
+            entry.Details.Contains("recovered=False") &&
             entry.Details.Contains("watched=True"));
         diagnostics.Entries.Select(entry => entry.Details).Should().OnlyContain(details =>
             !details.Contains("2026") && !details.Contains("path", StringComparison.OrdinalIgnoreCase));
@@ -303,6 +435,7 @@ public sealed class ShokoHostAdapterTests
             .Returns([SeriesData(series.Object, null, watchedEpisodes: 2)]);
         var metadata = new Mock<Shoko.Abstractions.Metadata.Services.IMetadataService>();
         metadata.Setup(service => service.GetShokoSeriesByID(9)).Returns(series.Object);
+        RegisterEpisodes(metadata, episode1);
         var diagnostics = new RecordingDiagnostics();
         var reader = new ShokoStateReader(users.Object, data.Object, metadata.Object, diagnostics,
             NullLogger<ShokoStateReader>.Instance);
@@ -466,16 +599,28 @@ public sealed class ShokoHostAdapterTests
         IShokoEpisode episode,
         bool watched,
         bool includeNavigation = true,
-        int playbackCount = 0)
+        int playbackCount = 0,
+        int? reportedSeriesId = null)
     {
         var data = new Mock<IEpisodeUserData>();
-        data.SetupGet(value => value.Series).Returns(series);
-        data.SetupGet(value => value.SeriesID).Returns(series.ID);
+        data.SetupGet(value => value.SeriesID).Returns(reportedSeriesId ?? series.ID);
         data.SetupGet(value => value.EpisodeID).Returns(episode.ID);
-        if (includeNavigation) data.SetupGet(value => value.Episode).Returns(episode);
+        if (includeNavigation)
+        {
+            data.SetupGet(value => value.Series).Returns(series);
+            data.SetupGet(value => value.Episode).Returns(episode);
+        }
         data.SetupGet(value => value.LastPlayedAt).Returns(watched ? new DateTime(2026, 1, 1) : null);
         data.SetupGet(value => value.PlaybackCount).Returns(playbackCount);
         return data.Object;
+    }
+
+    private static void RegisterEpisodes(
+        Mock<Shoko.Abstractions.Metadata.Services.IMetadataService> metadata,
+        params Mock<IShokoEpisode>[] episodes)
+    {
+        foreach (var episode in episodes)
+            metadata.Setup(service => service.GetShokoEpisodeByID(episode.Object.ID)).Returns(episode.Object);
     }
 
     private static IVideoUserData VideoData(

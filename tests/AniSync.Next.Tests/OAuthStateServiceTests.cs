@@ -27,7 +27,9 @@ public sealed class OAuthStateServiceTests
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var service = new OAuthStateService(new FakeConfiguration(), cache, TimeProvider.System);
         var state = service.Create("alice", ProviderKey.AniList, "https://shoko.test", out _);
+        var parts = state.Split('.');
+        var tamperedPayload = (parts[0][0] == 'A' ? 'B' : 'A') + parts[0][1..];
 
-        service.TryVerify(state[..^1] + (state[^1] == 'a' ? 'b' : 'a'), out _).Should().BeFalse();
+        service.TryVerify($"{tamperedPayload}.{parts[1]}", out _).Should().BeFalse();
     }
 }

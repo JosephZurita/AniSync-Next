@@ -15,36 +15,37 @@ public sealed class SyncPlanner : ISyncPlanner
         bool syncOnlyOnCompletion,
         bool syncRatings)
     {
+        var target = CreateProviderTarget(source, destination);
         var shouldSyncRating = syncRatings && source.RatingRaw is not null;
         if (providerMediaId is null)
         {
             return ApplyRatingPolicy(Create(source, provider, null, null, ChangeKind.UnresolvedMapping,
-                ReviewReason.MissingMapping, snapshotToken, now), null, shouldSyncRating);
+                ReviewReason.MissingMapping, snapshotToken, now, target), null, shouldSyncRating);
         }
 
         if (destination is null || !destination.Exists)
         {
-            if (source.Progress <= 0 && shouldSyncRating)
+            if (target.Progress <= 0 && shouldSyncRating)
             {
                 return Create(source, provider, providerMediaId, destination, ChangeKind.Rating,
-                    ReviewReason.RatingWouldCreateEntry, snapshotToken, now);
+                    ReviewReason.RatingWouldCreateEntry, snapshotToken, now, target);
             }
 
-            if (source.Progress <= 0)
+            if (target.Progress <= 0)
             {
                 return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-                    ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
+                    ReviewReason.None, snapshotToken, now, target), destination, shouldSyncRating);
             }
 
             if (syncOnlyOnCompletion && source.TotalEpisodes > 0 && source.Progress < source.TotalEpisodes)
             {
                 return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-                    ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
+                    ReviewReason.None, snapshotToken, now, target), destination, shouldSyncRating);
             }
 
             var addition = Create(source, provider, providerMediaId, destination,
-                source.DesiredStatus == CanonicalListStatus.Completed ? ChangeKind.Complete : ChangeKind.Add,
-                ReviewReason.None, snapshotToken, now);
+                target.Status == CanonicalListStatus.Completed ? ChangeKind.Complete : ChangeKind.Add,
+                ReviewReason.None, snapshotToken, now, target);
             return ApplyRatingPolicy(addition, destination, shouldSyncRating);
         }
 
@@ -52,28 +53,28 @@ public sealed class SyncPlanner : ISyncPlanner
                                   source.TotalEpisodes <= 0 ||
                                   source.Progress >= source.TotalEpisodes;
 
-        if (progressSyncAllowed && source.Progress < destination.Progress)
+        if (progressSyncAllowed && target.Progress < destination.Progress)
         {
             var decrease = Create(source, provider, providerMediaId, destination, ChangeKind.Decrease,
-                ReviewReason.ProgressDecrease, snapshotToken, now);
+                ReviewReason.ProgressDecrease, snapshotToken, now, target);
             return ApplyRatingPolicy(decrease, destination, shouldSyncRating);
         }
 
         if (progressSyncAllowed &&
-            (source.Progress > destination.Progress || source.DesiredStatus != destination.Status))
+            (target.Progress > destination.Progress || target.Status != destination.Status))
         {
-            var kind = source.DesiredStatus == CanonicalListStatus.Completed
+            var kind = target.Status == CanonicalListStatus.Completed
                 ? ChangeKind.Complete
                 : ChangeKind.Advance;
             var progressChange = Create(source, provider, providerMediaId, destination, kind,
-                ReviewReason.None, snapshotToken, now);
+                ReviewReason.None, snapshotToken, now, target);
             return ApplyRatingPolicy(progressChange, destination, shouldSyncRating);
         }
 
         if (shouldSyncRating && source.RatingRaw != destination.RatingRaw)
         {
             return Create(source, provider, providerMediaId, destination, ChangeKind.Rating,
-                ReviewReason.None, snapshotToken, now) with
+                ReviewReason.None, snapshotToken, now, target) with
             {
                 AfterProgress = destination.Progress,
                 AfterStatus = destination.Status,
@@ -81,7 +82,20 @@ public sealed class SyncPlanner : ISyncPlanner
         }
 
         return ApplyRatingPolicy(Create(source, provider, providerMediaId, destination, ChangeKind.NoChange,
-            ReviewReason.None, snapshotToken, now), destination, shouldSyncRating);
+            ReviewReason.None, snapshotToken, now, target), destination, shouldSyncRating);
+    }
+
+    private static ProviderTarget CreateProviderTarget(
+        ShokoSeriesState source,
+        ProviderListState? destination)
+    {
+        var progress = destination is { TotalEpisodes: > 0 }
+            ? Math.Min(source.Progress, destination.TotalEpisodes)
+            : source.Progress;
+        var status = destination is { TotalEpisodes: > 0 } && progress >= destination.TotalEpisodes
+            ? CanonicalListStatus.Completed
+            : source.DesiredStatus;
+        return new ProviderTarget(progress, status);
     }
 
     private static PlannedChange ApplyRatingPolicy(
@@ -103,6 +117,7 @@ public sealed class SyncPlanner : ISyncPlanner
             destination?.Provider,
             destination?.MediaId,
             destination?.Progress,
+            destination?.TotalEpisodes,
             destination?.Status,
             destination?.RatingRaw,
             destination?.Exists);
@@ -117,7 +132,8 @@ public sealed class SyncPlanner : ISyncPlanner
         ChangeKind kind,
         ReviewReason reason,
         string snapshotToken,
-        DateTimeOffset now) => new(
+        DateTimeOffset now,
+        ProviderTarget target) => new(
             Guid.NewGuid(),
             source.ShokoUsername,
             source.SeriesId,
@@ -128,12 +144,14 @@ public sealed class SyncPlanner : ISyncPlanner
             kind,
             reason,
             destination?.Progress ?? 0,
-            source.Progress,
+            target.Progress,
             destination?.Status,
-            source.DesiredStatus,
+            target.Status,
             destination?.RatingRaw,
             source.RatingRaw,
             snapshotToken,
             now,
             source.ImageUrl);
+
+    private readonly record struct ProviderTarget(int Progress, CanonicalListStatus Status);
 }

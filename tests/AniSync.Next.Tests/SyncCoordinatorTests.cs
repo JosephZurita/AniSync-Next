@@ -42,6 +42,42 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshOmitsCompletedEntryWhenProviderHasLowerKnownEpisodeTotal()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(13) with { TotalEpisodes = 13 });
+        var provider = new FakeProvider(ProviderState(12) with
+        {
+            Provider = ProviderKey.MyAnimeList,
+            TotalEpisodes = 12,
+            Status = CanonicalListStatus.Completed,
+        });
+        var setup = Create(directory.Path, source, provider);
+
+        var preview = await setup.Coordinator.RefreshAsync("alice", default);
+
+        preview.Items.Should().BeEmpty("provider progress is already at its known episode limit");
+        (await setup.Store.GetForUserAsync("alice", default)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AutomaticSyncDoesNotExceedProviderEpisodeTotal()
+    {
+        using var directory = new TestDirectory();
+        var source = new MutableShokoReader(State(13) with { TotalEpisodes = 13 });
+        var provider = new FakeProvider(ProviderState(11) with
+        {
+            Provider = ProviderKey.MyAnimeList,
+            TotalEpisodes = 12,
+        });
+        var setup = Create(directory.Path, source, provider);
+
+        await setup.Coordinator.ProcessSeriesAsync("alice", 1, default);
+
+        provider.Applied.Should().ContainSingle().Which.AfterProgress.Should().Be(12);
+    }
+
+    [Fact]
     public async Task RefreshVerifiesAnApparentlyMissingProviderEntryBeforeOfferingAnAddition()
     {
         using var directory = new TestDirectory();
@@ -260,7 +296,9 @@ public sealed class SyncCoordinatorTests
 
     private sealed class FakeProvider(ProviderListState state) : ISyncProvider
     {
-        public ProviderKey Key => state.Provider;
+        private ProviderListState _state = state;
+
+        public ProviderKey Key => _state.Provider;
         public List<PlannedChange> Applied { get; } = [];
         public ProviderException? Failure { get; init; }
         public Exception? ListFailure { get; init; }
@@ -273,18 +311,24 @@ public sealed class SyncCoordinatorTests
                 ? Task.FromException<IReadOnlyDictionary<int, ProviderListState>>(ListFailure)
                 : Task.FromResult<IReadOnlyDictionary<int, ProviderListState>>(OmitFromList
                     ? new Dictionary<int, ProviderListState>()
-                    : new Dictionary<int, ProviderListState> { [state.MediaId] = state });
+                    : new Dictionary<int, ProviderListState> { [_state.MediaId] = _state });
         public Task<ProviderListState?> GetEntryAsync(string shokoUsername, int mediaId, CancellationToken cancellationToken)
         {
             EntryRequests++;
-            return Task.FromResult(EntryExists ? state : null);
+            return Task.FromResult(EntryExists ? _state : null);
         }
         public Task<IReadOnlyList<ProviderMediaSearchResult>> SearchAsync(string shokoUsername, string query, bool includeAdult, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProviderMediaSearchResult>>([]);
         public Task<ProviderListState> ApplyAsync(string shokoUsername, PlannedChange change, CancellationToken cancellationToken)
         {
             Applied.Add(change);
             if (Failure is not null) throw Failure;
-            return Task.FromResult(state with { Progress = change.AfterProgress, Status = change.AfterStatus, RatingRaw = change.AfterRatingRaw });
+            _state = _state with
+            {
+                Progress = change.AfterProgress,
+                Status = change.AfterStatus,
+                RatingRaw = change.AfterRatingRaw,
+            };
+            return Task.FromResult(_state);
         }
     }
 

@@ -35,6 +35,60 @@ public sealed class SyncPlannerTests
     }
 
     [Fact]
+    public void ProviderEpisodeTotalCapsOutboundProgress()
+    {
+        var source = Source(progress: 13) with { TotalEpisodes = 13 };
+        var destination = Destination(ProviderKey.MyAnimeList, 22297, progress: 11) with
+        {
+            TotalEpisodes = 12,
+        };
+
+        var result = _planner.Plan(source, ProviderKey.MyAnimeList, 22297, destination,
+            "snapshot", Now, false, true);
+
+        result.Kind.Should().Be(ChangeKind.Complete);
+        result.BeforeProgress.Should().Be(11);
+        result.AfterProgress.Should().Be(12);
+        result.AfterStatus.Should().Be(CanonicalListStatus.Completed);
+    }
+
+    [Fact]
+    public void CompletedProviderAtLowerKnownEpisodeTotalIsNoOp()
+    {
+        var source = Source(progress: 13) with { TotalEpisodes = 13 };
+        var destination = Destination(ProviderKey.MyAnimeList, 22297, progress: 12) with
+        {
+            TotalEpisodes = 12,
+            Status = CanonicalListStatus.Completed,
+        };
+
+        var result = _planner.Plan(source, ProviderKey.MyAnimeList, 22297, destination,
+            "snapshot", Now, false, true);
+
+        result.Kind.Should().Be(ChangeKind.NoChange);
+        result.AfterProgress.Should().Be(12);
+        result.AfterStatus.Should().Be(CanonicalListStatus.Completed);
+    }
+
+    [Fact]
+    public void ProviderAtKnownEpisodeLimitIsNotDowngradedByLargerShokoSeason()
+    {
+        var source = Source(progress: 13) with { TotalEpisodes = 24 };
+        var destination = Destination(ProviderKey.MyAnimeList, 22297, progress: 12) with
+        {
+            TotalEpisodes = 12,
+            Status = CanonicalListStatus.Completed,
+        };
+
+        var result = _planner.Plan(source, ProviderKey.MyAnimeList, 22297, destination,
+            "snapshot", Now, false, true);
+
+        result.Kind.Should().Be(ChangeKind.NoChange);
+        result.AfterProgress.Should().Be(12);
+        result.AfterStatus.Should().Be(CanonicalListStatus.Completed);
+    }
+
+    [Fact]
     public void UnwatchBecomesExplicitDecreaseReview()
     {
         var result = Plan(Source(progress: 3), Destination(progress: 7));
@@ -107,6 +161,8 @@ public sealed class SyncPlannerTests
         baseline.Should().NotBe(SyncPlanner.CreateSnapshotToken(Source(progress: 4), Destination(progress: 5)));
         baseline.Should().NotBe(SyncPlanner.CreateSnapshotToken(Source(progress: 5, rating: 90), Destination(progress: 5)));
         baseline.Should().NotBe(SyncPlanner.CreateSnapshotToken(Source(progress: 5), Destination(progress: 6)));
+        baseline.Should().NotBe(SyncPlanner.CreateSnapshotToken(Source(progress: 5),
+            Destination(progress: 5) with { TotalEpisodes = 13 }));
     }
 
     [Fact]

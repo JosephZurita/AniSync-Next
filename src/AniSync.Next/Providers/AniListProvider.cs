@@ -91,7 +91,7 @@ internal sealed class AniListProvider(ProviderHttpTransport transport) : ISyncPr
     {
         var mediaId = change.ProviderMediaId
             ?? throw new ProviderException("An AniList mapping is required before applying this change.", false);
-        const string mutation = "mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus!, $scoreRaw: Float) { SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw) { status progress score(format: POINT_100) media { id episodes title { romaji english } } } }";
+        const string mutation = "mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus!, $scoreRaw: Int) { SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw) { status progress score(format: POINT_100) media { id episodes title { romaji english } } } }";
         using var document = await PostAsync(shokoUsername, mutation, new
         {
             mediaId,

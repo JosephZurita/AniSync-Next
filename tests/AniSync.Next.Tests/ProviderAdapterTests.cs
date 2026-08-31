@@ -148,6 +148,21 @@ public sealed class ProviderAdapterTests
     }
 
     [Fact]
+    public async Task AniListUsesIntegerRawScoreMutationContract()
+    {
+        var handler = new QueuedJsonHandler("{\"data\":{\"SaveMediaListEntry\":{\"status\":\"CURRENT\",\"progress\":5,\"score\":83,\"media\":{\"id\":99,\"episodes\":12,\"title\":{\"romaji\":\"Title\",\"english\":null}}}}}");
+        var provider = new AniListProvider(Transport(handler));
+
+        var result = await provider.ApplyAsync("alice", Change(ProviderKey.AniList, 83), default);
+
+        result.RatingRaw.Should().Be(83);
+        handler.Bodies.Single().Should()
+            .Contain("$scoreRaw: Int")
+            .And.NotContain("$scoreRaw: Float")
+            .And.Contain("\"scoreRaw\":83");
+    }
+
+    [Fact]
     public async Task AniListClearsAProviderRatingWithRawZero()
     {
         var handler = new QueuedJsonHandler("{\"data\":{\"SaveMediaListEntry\":{\"status\":\"CURRENT\",\"progress\":5,\"score\":0,\"media\":{\"id\":99,\"episodes\":12,\"title\":{\"romaji\":\"Title\",\"english\":null}}}}}");
@@ -155,16 +170,33 @@ public sealed class ProviderAdapterTests
 
         await provider.ApplyAsync("alice", Change(ProviderKey.AniList, null), default);
 
-        handler.Bodies.Single().Should().Contain("\"scoreRaw\":0");
+        handler.Bodies.Single().Should()
+            .Contain("$scoreRaw: Int")
+            .And.NotContain("$scoreRaw: Float")
+            .And.Contain("\"scoreRaw\":0");
+    }
+
+    [Fact]
+    public async Task AniListProgressOnlyUpdateKeepsNullableIntegerScoreContract()
+    {
+        var handler = new QueuedJsonHandler("{\"data\":{\"SaveMediaListEntry\":{\"status\":\"CURRENT\",\"progress\":5,\"score\":null,\"media\":{\"id\":99,\"episodes\":12,\"title\":{\"romaji\":\"Title\",\"english\":null}}}}}");
+        var provider = new AniListProvider(Transport(handler));
+
+        await provider.ApplyAsync("alice", Change(ProviderKey.AniList, null, null), default);
+
+        handler.Bodies.Single().Should()
+            .Contain("$scoreRaw: Int")
+            .And.NotContain("$scoreRaw: Float")
+            .And.Contain("\"scoreRaw\":null");
     }
 
     private static ProviderHttpTransport Transport(HttpMessageHandler handler) =>
         new(new StaticFactory(handler), new StaticTokens(), new NoDelay(), new NullDiagnostics());
 
-    private static PlannedChange Change(ProviderKey provider, int? rating) => new(
+    private static PlannedChange Change(ProviderKey provider, int? rating, int? beforeRating = 70) => new(
         Guid.NewGuid(), "alice", 1, 2, "Title", provider, 99, ChangeKind.Advance,
         ReviewReason.None, 4, 5, CanonicalListStatus.Watching, CanonicalListStatus.Watching,
-        70, rating, "token", DateTimeOffset.UtcNow);
+        beforeRating, rating, "token", DateTimeOffset.UtcNow);
 
     private sealed class StaticFactory(HttpMessageHandler handler) : IHttpClientFactory
     {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { api, json } from './api'
 import { aniDbAnimeUrl, mappingPath, mappingPrefill, providerAnimeUrl, shokoSeriesUrl } from './review-links'
@@ -133,27 +133,44 @@ function Mappings() {
   const [form, setForm] = useState(() => mappingPrefill(searchParams))
   const [results, setResults] = useState<SearchResult[]>([])
   const [error, setError] = useState('')
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const searchRequest = useRef(0)
+  const updateForm = (next: typeof form) => {
+    searchRequest.current += 1
+    setForm(next); setResults([]); setError(''); setSearched(false); setSearching(false)
+  }
   const search = async (event: FormEvent) => {
-    event.preventDefault(); setError('')
-    try { setResults(await api('/mappings/search', json('POST', { seriesId: Number(form.seriesId), provider: form.provider, query: form.query }))) }
-    catch (value) { setError(asMessage(value)) }
+    const request = ++searchRequest.current
+    event.preventDefault(); setError(''); setResults([]); setSearched(false); setSearching(true)
+    try {
+      const next = await api<SearchResult[]>('/mappings/search', json('POST', { seriesId: Number(form.seriesId), provider: form.provider, query: form.query }))
+      if (request !== searchRequest.current) return
+      setResults(next)
+      setSearched(true)
+    }
+    catch (value) { if (request === searchRequest.current) setError(asMessage(value)) }
+    finally { if (request === searchRequest.current) setSearching(false) }
   }
   const save = async (result: SearchResult) => {
     try {
       await api('/mappings', json('PUT', { seriesId: Number(form.seriesId), aniDbAnimeId: Number(form.aniDbAnimeId), provider: form.provider, mediaId: result.mediaId, mediaTitle: result.title }))
-      setResults([]); await remote.reload()
+      setResults([]); setSearched(false); await remote.reload()
     } catch (value) { setError(asMessage(value)) }
   }
   return <Page title="Mappings" subtitle="Confirm unresolved provider IDs; fuzzy matches are never selected automatically.">
     {error && <div className="notice error">{error}</div>}
     <section className="panel"><h2>Find a provider title</h2><form className="mapping-form" onSubmit={event => void search(event)}>
-      <input aria-label="Shoko series ID" placeholder="Shoko series ID" value={form.seriesId} onChange={e => setForm({ ...form, seriesId: e.target.value })} />
-      <input aria-label="AniDB anime ID" placeholder="AniDB anime ID" value={form.aniDbAnimeId} onChange={e => setForm({ ...form, aniDbAnimeId: e.target.value })} />
-      <select value={form.provider} onChange={e => setForm({ ...form, provider: e.target.value as ProviderKey })}><option>AniList</option><option>MyAnimeList</option></select>
-      <input aria-label="Search title" placeholder="Exact title to search" value={form.query} onChange={e => setForm({ ...form, query: e.target.value })} />
-      <button>Search</button>
+      <input aria-label="Shoko series ID" placeholder="Shoko series ID" value={form.seriesId} onChange={e => updateForm({ ...form, seriesId: e.target.value })} />
+      <input aria-label="AniDB anime ID" placeholder="AniDB anime ID" value={form.aniDbAnimeId} onChange={e => updateForm({ ...form, aniDbAnimeId: e.target.value })} />
+      <select value={form.provider} onChange={e => updateForm({ ...form, provider: e.target.value as ProviderKey })}><option>AniList</option><option>MyAnimeList</option></select>
+      <input aria-label="Search title" placeholder="Exact title to search" value={form.query} onChange={e => updateForm({ ...form, query: e.target.value })} />
+      <button disabled={searching} aria-busy={searching}>{searching ? 'Searching…' : 'Search'}</button>
     </form>
-    {results.map(result => <div className="mapping-result" key={result.mediaId}><div><strong>{result.title}</strong><small>{result.startYear || 'Year unknown'} · {result.totalEpisodes || '?'} episodes</small></div><button onClick={() => void save(result)}>Use this match</button></div>)}</section>
+    <div aria-live="polite">
+      {searched && results.length === 0 && <p className="mapping-empty">No {prettyProvider(form.provider)} matches found. Try another title.</p>}
+      {results.map(result => <div className="mapping-result" key={result.mediaId}><div><strong>{result.title}</strong><small>{result.startYear || 'Year unknown'} · {result.totalEpisodes || '?'} episodes</small></div><button onClick={() => void save(result)}>Use this match</button></div>)}
+    </div></section>
     <section className="panel"><h2>Saved mappings</h2>{remote.data?.length ? <div className="table">
       {remote.data.map(mapping => <div className="table-row" key={`${mapping.aniDbAnimeId}-${mapping.provider}`}><strong>{mapping.mediaTitle}</strong><span>AniDB {mapping.aniDbAnimeId}</span><span>{prettyProvider(mapping.provider)} {mapping.mediaId}</span><button className="secondary" onClick={() => void api(`/mappings/${mapping.aniDbAnimeId}/${mapping.provider}`, { method: 'DELETE' }).then(remote.reload).catch(value => setError(asMessage(value)))}>{mapping.isUserVerified ? 'Remove verified' : 'Forget database match'}</button></div>)}
     </div> : <Empty text="No mappings have been persisted yet." />}</section>

@@ -2,7 +2,7 @@ using AniSync.Next.Configuration;
 
 namespace AniSync.Next.Application;
 
-internal interface IAniSyncDiagnostics
+public interface IAniSyncDiagnostics
 {
     void Write(string username, DiagnosticLogLevel requiredLevel, string eventName, string details);
 }

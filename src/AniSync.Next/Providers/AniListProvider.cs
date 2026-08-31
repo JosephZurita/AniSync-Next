@@ -68,9 +68,11 @@ internal sealed class AniListProvider(ProviderHttpTransport transport) : ISyncPr
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query)) return [];
-        const string gql = "query ($query: String!, $isAdult: Boolean) { Page(page: 1, perPage: 20) { media(search: $query, type: ANIME, isAdult: $isAdult) { id episodes isAdult startDate { year } coverImage { large } title { romaji english } } } }";
+        const string safeSearch = "query ($query: String!) { Page(page: 1, perPage: 20) { media(search: $query, type: ANIME, isAdult: false) { id episodes isAdult startDate { year } coverImage { large } title { romaji english } } } }";
+        const string unrestrictedSearch = "query ($query: String!) { Page(page: 1, perPage: 20) { media(search: $query, type: ANIME) { id episodes isAdult startDate { year } coverImage { large } title { romaji english } } } }";
+        var gql = includeAdult ? unrestrictedSearch : safeSearch;
         using var document = await PostAsync(shokoUsername, gql,
-            new { query = query.Trim(), isAdult = includeAdult ? (bool?)null : false }, cancellationToken);
+            new { query = query.Trim() }, cancellationToken);
         return Data(document).GetProperty("Page").GetProperty("media").EnumerateArray()
             .Select(media => new ProviderMediaSearchResult(
                 Key,

@@ -20,7 +20,8 @@ public sealed class AniSyncNextController(
     ISyncCoordinator coordinator,
     IPluginStateStore stateStore,
     IMappingResolver mappingResolver,
-    IShokoStateReader shokoStateReader) : Controller
+    IShokoStateReader shokoStateReader,
+    IAniSyncDiagnostics diagnostics) : Controller
 {
     [HttpGet("api/session")]
     public async Task<ActionResult<SessionResponse>> GetSession(CancellationToken cancellationToken)
@@ -189,8 +190,11 @@ public sealed class AniSyncNextController(
         if (await shokoStateReader.GetSeriesStateAsync(username, request.SeriesId, cancellationToken) is null)
             return NotFound(new ApiError("The Shoko series was not found for this user."));
         var settings = configuration.GetUserSettings(username);
-        return Ok(await providers.Get(request.Provider).SearchAsync(username, request.Query,
-            settings.IncludeAdultSearch, cancellationToken));
+        var results = await providers.Get(request.Provider).SearchAsync(username, request.Query,
+            settings.IncludeAdultSearch, cancellationToken);
+        diagnostics.Write(username, DiagnosticLogLevel.Detailed, "mapping.search",
+            $"provider={request.Provider} seriesId={request.SeriesId} includeAdult={settings.IncludeAdultSearch} resultCount={results.Count}");
+        return Ok(results);
     }
 
     [HttpPut("api/mappings")]

@@ -192,3 +192,60 @@ test('unresolved review opens a validated prefilled mapping form', async ({ page
   await expect(page.getByRole('combobox')).toHaveValue('MyAnimeList')
   await expect(page.getByLabel('Search title')).toHaveValue('Unresolved & Series')
 })
+
+test('mapping search reports loading, results, empty responses, failures, and requires confirmation', async ({ page }) => {
+  const savedMappings: Array<Record<string, unknown>> = []
+  await page.addInitScript(() => {
+    localStorage.setItem('apiSession', JSON.stringify({ apikey: 'browser-session-key' }))
+  })
+  await page.route('**/anisync-next/api/**', async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ json: session })
+    if (path.endsWith('/mappings/search')) {
+      const { query } = request.postDataJSON() as { query: string }
+      if (query === 'Failure') return route.fulfill({ status: 502, json: { error: 'AniList search is unavailable.' } })
+      if (query === 'No Match') return route.fulfill({ json: [] })
+      await new Promise(resolve => setTimeout(resolve, 400))
+      return route.fulfill({ json: [{
+        provider: 'AniList', mediaId: 207141, title: 'Chainsmoker Cat',
+        totalEpisodes: 0, startYear: 2026,
+      }] })
+    }
+    if (path.endsWith('/mappings') && request.method() === 'PUT') {
+      savedMappings.push(request.postDataJSON() as Record<string, unknown>)
+      return route.fulfill({ status: 204 })
+    }
+    if (path.endsWith('/mappings')) return route.fulfill({ json: [] })
+    return route.fulfill({ status: 404, json: { error: 'not mocked' } })
+  })
+
+  await page.goto('/anisync-next/mappings?seriesId=440&aniDbAnimeId=19873&provider=AniList&query=Yani+Neko')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Searching…' })).toBeDisabled()
+  await expect(page.getByText('Chainsmoker Cat')).toBeVisible()
+  expect(savedMappings).toHaveLength(0)
+
+  await page.getByLabel('Search title').fill('Slow old query')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Searching…' })).toBeDisabled()
+  await page.getByLabel('Search title').fill('No Match')
+  await page.waitForTimeout(450)
+  await expect(page.getByText('Chainsmoker Cat')).not.toBeVisible()
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByText('No AniList matches found. Try another title.')).toBeVisible()
+
+  await page.getByLabel('Search title').fill('Failure')
+  await expect(page.getByText('No AniList matches found. Try another title.')).not.toBeVisible()
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByText('AniList search is unavailable.')).toBeVisible()
+
+  await page.getByLabel('Search title').fill('Yani Neko')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await page.getByRole('button', { name: 'Use this match' }).click()
+  await expect.poll(() => savedMappings).toHaveLength(1)
+  expect(savedMappings[0]).toMatchObject({
+    seriesId: 440, aniDbAnimeId: 19873, provider: 'AniList', mediaId: 207141,
+    mediaTitle: 'Chainsmoker Cat',
+  })
+})

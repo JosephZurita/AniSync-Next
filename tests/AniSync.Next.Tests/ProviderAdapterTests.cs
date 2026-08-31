@@ -80,6 +80,61 @@ public sealed class ProviderAdapterTests
     }
 
     [Fact]
+    public async Task AniListSearchExcludesAdultTitlesWithAnExplicitFalseFilter()
+    {
+        var handler = new QueuedJsonHandler(
+            "{\"data\":{\"Page\":{\"media\":[{\"id\":207141,\"episodes\":null,\"isAdult\":false,\"startDate\":{\"year\":2026},\"coverImage\":{\"large\":\"https://img.test/yani.jpg\"},\"title\":{\"romaji\":\"Yani Neko\",\"english\":\"Chainsmoker Cat\"}}]}}}");
+        var provider = new AniListProvider(Transport(handler));
+
+        var results = await provider.SearchAsync("alice", " Yani Neko ", false, default);
+
+        results.Should().ContainSingle();
+        results[0].MediaId.Should().Be(207141);
+        results[0].Title.Should().Be("Chainsmoker Cat");
+        results[0].TotalEpisodes.Should().Be(0);
+        results[0].StartYear.Should().Be(2026);
+        handler.Bodies.Single().Should().Contain("isAdult: false").And.NotContain("$isAdult");
+    }
+
+    [Fact]
+    public async Task AniListSearchIncludesAllTitlesByOmittingTheAdultFilter()
+    {
+        var handler = new QueuedJsonHandler(
+            "{\"data\":{\"Page\":{\"media\":[{\"id\":207141,\"episodes\":null,\"isAdult\":false,\"startDate\":{\"year\":2026},\"coverImage\":{\"large\":null},\"title\":{\"romaji\":\"Yani Neko\",\"english\":\"Chainsmoker Cat\"}}]}}}");
+        var provider = new AniListProvider(Transport(handler));
+
+        var results = await provider.SearchAsync("alice", "Chainsmoker Cat", true, default);
+
+        results.Should().ContainSingle();
+        results[0].MediaId.Should().Be(207141);
+        handler.Bodies.Single().Should().NotContain("isAdult:").And.NotContain("$isAdult");
+    }
+
+    [Fact]
+    public async Task AniListSearchReturnsAnEmptyListForNoMatches()
+    {
+        var provider = new AniListProvider(Transport(new QueuedJsonHandler(
+            "{\"data\":{\"Page\":{\"media\":[]}}}")));
+
+        var results = await provider.SearchAsync("alice", "Not a real title", true, default);
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AniListSearchGraphQlErrorsRemainStructuredFailures()
+    {
+        var provider = new AniListProvider(Transport(new QueuedJsonHandler(
+            "{\"errors\":[{\"message\":\"Search is unavailable\"}],\"data\":null}")));
+
+        var action = () => provider.SearchAsync("alice", "Yani Neko", true, default);
+
+        var exception = await action.Should().ThrowAsync<ProviderException>();
+        exception.Which.IsTransient.Should().BeFalse();
+        exception.Which.Message.Should().Contain("Search is unavailable");
+    }
+
+    [Fact]
     public async Task AniListGraphQlErrorsAreStructuredPermanentFailures()
     {
         var provider = new AniListProvider(Transport(new QueuedJsonHandler(

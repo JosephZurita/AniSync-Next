@@ -1,5 +1,6 @@
 using AniSync.Next.Api;
 using AniSync.Next.Application;
+using AniSync.Next.Configuration;
 using AniSync.Next.Domain;
 using AniSync.Next.Persistence;
 using AniSync.Next.Providers;
@@ -100,6 +101,37 @@ public sealed class ApiContractTests
     }
 
     [Fact]
+    public async Task MappingSearchDiagnosticsContainOnlyRedactedMetadataAndResultCount()
+    {
+        using var directory = new TestDirectory();
+        const string query = "Sensitive title query";
+        var configuration = new FakeConfiguration();
+        configuration.SaveUserSettings("alice", new UserSyncSettings { IncludeAdultSearch = true });
+        var provider = new Mock<ISyncProvider>();
+        provider.Setup(service => service.SearchAsync("alice", query, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ProviderMediaSearchResult(ProviderKey.AniList, 207141,
+                "Chainsmoker Cat", 0, 2026, null)]);
+        var providers = new Mock<IProviderRegistry>();
+        providers.Setup(service => service.Get(ProviderKey.AniList)).Returns(provider.Object);
+        var stateReader = new Mock<IShokoStateReader>();
+        stateReader.Setup(service => service.GetSeriesStateAsync("alice", 440, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShokoSeriesState("alice", 440, 19873, "Yani Neko", 1, 0, null));
+        var diagnostics = new RecordingDiagnostics();
+        var controller = Controller(directory.Path, User("alice", false), configuration: configuration,
+            providers: providers.Object, stateReader: stateReader.Object, diagnostics: diagnostics);
+
+        var result = await controller.SearchMappings(
+            new SearchMappingRequest(440, ProviderKey.AniList, query), default);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+        diagnostics.Entries.Should().ContainSingle();
+        diagnostics.Entries[0].EventName.Should().Be("mapping.search");
+        diagnostics.Entries[0].Details.Should().Be(
+            "provider=AniList seriesId=440 includeAdult=True resultCount=1");
+        diagnostics.Entries[0].Details.Should().NotContain(query).And.NotContain("Chainsmoker Cat");
+    }
+
+    [Fact]
     public void OAuthUsesValidatedBrowserOriginBehindTlsTerminatingProxy()
     {
         var context = new DefaultHttpContext();
@@ -150,20 +182,25 @@ public sealed class ApiContractTests
         IUser? current,
         IPluginStateStore? store = null,
         ISyncCoordinator? coordinator = null,
-        IProviderOAuthService? oauth = null)
+        IProviderOAuthService? oauth = null,
+        IPluginConfigurationService? configuration = null,
+        IProviderRegistry? providers = null,
+        IShokoStateReader? stateReader = null,
+        IAniSyncDiagnostics? diagnostics = null)
     {
         var users = new Mock<IUserService>();
         users.Setup(service => service.GetUserFromHttpContext(It.IsAny<HttpContext>())).Returns(current);
         var state = store ?? new JsonPluginStateStore(path, NullLogger<JsonPluginStateStore>.Instance);
         var controller = new AniSyncNextController(
             users.Object,
-            new FakeConfiguration(),
+            configuration ?? new FakeConfiguration(),
             oauth ?? Mock.Of<IProviderOAuthService>(),
-            Mock.Of<IProviderRegistry>(),
+            providers ?? Mock.Of<IProviderRegistry>(),
             coordinator ?? Mock.Of<ISyncCoordinator>(),
             state,
             Mock.Of<IMappingResolver>(),
-            Mock.Of<IShokoStateReader>())
+            stateReader ?? Mock.Of<IShokoStateReader>(),
+            diagnostics ?? new NullDiagnostics())
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -184,5 +221,13 @@ public sealed class ApiContractTests
             3, ChangeKind.Advance, ReviewReason.None, 1, 2, CanonicalListStatus.Watching,
             CanonicalListStatus.Watching, null, null, "token", DateTimeOffset.UtcNow);
         return new SyncOutcome(SyncOutcomeKind.Applied, change, CompletedAt: DateTimeOffset.UtcNow);
+    }
+
+    private sealed class RecordingDiagnostics : IAniSyncDiagnostics
+    {
+        public List<(DiagnosticLogLevel Level, string EventName, string Details)> Entries { get; } = [];
+
+        public void Write(string username, DiagnosticLogLevel requiredLevel, string eventName, string details) =>
+            Entries.Add((requiredLevel, eventName, details));
     }
 }

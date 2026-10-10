@@ -91,14 +91,23 @@ internal sealed class AniListProvider(ProviderHttpTransport transport) : ISyncPr
     {
         var mediaId = change.ProviderMediaId
             ?? throw new ProviderException("An AniList mapping is required before applying this change.", false);
-        const string mutation = "mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus!, $scoreRaw: Int) { SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw) { status progress score(format: POINT_100) media { id episodes title { romaji english } } } }";
-        using var document = await PostAsync(shokoUsername, mutation, new
-        {
-            mediaId,
-            progress = change.AfterProgress,
-            status = ToAniListStatus(change.AfterStatus),
-            scoreRaw = change.AfterRatingRaw ?? (change.BeforeRatingRaw is not null ? 0 : (int?)null),
-        }, cancellationToken);
+        const string mutation = "mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus!) { SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status) { status progress score(format: POINT_100) media { id episodes title { romaji english } } } }";
+        const string ratingMutation = "mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus!, $scoreRaw: Int!) { SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw) { status progress score(format: POINT_100) media { id episodes title { romaji english } } } }";
+        var scoreRaw = change.AfterRatingRaw ?? (change.BeforeRatingRaw is not null ? 0 : (int?)null);
+        using var document = scoreRaw is { } score
+            ? await PostAsync(shokoUsername, ratingMutation, new
+            {
+                mediaId,
+                progress = change.AfterProgress,
+                status = ToAniListStatus(change.AfterStatus),
+                scoreRaw = score,
+            }, cancellationToken)
+            : await PostAsync(shokoUsername, mutation, new
+            {
+                mediaId,
+                progress = change.AfterProgress,
+                status = ToAniListStatus(change.AfterStatus),
+            }, cancellationToken);
         return ToState(Data(document).GetProperty("SaveMediaListEntry"));
     }
 

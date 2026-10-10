@@ -177,7 +177,7 @@ public sealed class ProviderAdapterTests
     }
 
     [Fact]
-    public async Task AniListProgressOnlyUpdateKeepsNullableIntegerScoreContract()
+    public async Task AniListProgressOnlyUpdateOmitsScore()
     {
         var handler = new QueuedJsonHandler("{\"data\":{\"SaveMediaListEntry\":{\"status\":\"CURRENT\",\"progress\":5,\"score\":null,\"media\":{\"id\":99,\"episodes\":12,\"title\":{\"romaji\":\"Title\",\"english\":null}}}}}");
         var provider = new AniListProvider(Transport(handler));
@@ -185,9 +185,8 @@ public sealed class ProviderAdapterTests
         await provider.ApplyAsync("alice", Change(ProviderKey.AniList, null, null), default);
 
         handler.Bodies.Single().Should()
-            .Contain("$scoreRaw: Int")
-            .And.NotContain("$scoreRaw: Float")
-            .And.Contain("\"scoreRaw\":null");
+            .NotContain("$scoreRaw")
+            .And.NotContain("\"scoreRaw\"");
     }
 
     private static ProviderHttpTransport Transport(HttpMessageHandler handler) =>

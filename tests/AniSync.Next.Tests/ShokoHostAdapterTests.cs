@@ -418,7 +418,7 @@ public sealed class ShokoHostAdapterTests
         var episode1 = Episode(series.Object, 1_001, 1, EpisodeType.Episode);
         var episode2 = Episode(series.Object, 1_002, 2, EpisodeType.Episode);
         var video = new Mock<IVideo>();
-        video.SetupGet(value => value.ID).Returns(200);
+        video.SetupGet(value => value.LocalID).Returns(200);
         video.SetupGet(value => value.Episodes).Returns([episode2.Object]);
         SetEpisodes(series, episode1, episode2);
         var videoData = new Mock<IVideoUserData>();
@@ -522,6 +522,7 @@ public sealed class ShokoHostAdapterTests
         });
         queue.Reader.TryRead(out var watch).Should().BeTrue();
         watch!.Reason.Should().Be("watch-state");
+        watch.SeriesId.Should().Be(9);
         service.Raise(value => value.SeriesUserDataSaved += null, new SeriesUserDataSavedEventArgs
         {
             User = user,
@@ -532,6 +533,7 @@ public sealed class ShokoHostAdapterTests
         });
         queue.Reader.TryRead(out var rating).Should().BeTrue();
         rating!.Reason.Should().Be("rating");
+        rating.SeriesId.Should().Be(9);
 
         await bridge.StopAsync(default);
     }
@@ -546,7 +548,7 @@ public sealed class ShokoHostAdapterTests
     private static IUser User(string username, int id)
     {
         var user = new Mock<IUser>();
-        user.SetupGet(value => value.ID).Returns(id);
+        user.SetupGet(value => value.LocalID).Returns(id);
         user.SetupGet(value => value.Username).Returns(username);
         user.Setup(value => value.IsAllowedToSee(It.IsAny<IShokoSeries>())).Returns(true);
         return user.Object;
@@ -558,7 +560,7 @@ public sealed class ShokoHostAdapterTests
         int watchedEpisodes = 0)
     {
         var data = new Mock<ISeriesUserData>();
-        data.SetupGet(value => value.SeriesID).Returns(series.ID);
+        data.SetupGet(value => value.SeriesID).Returns(series.LocalID);
         data.SetupGet(value => value.Series).Returns(series);
         data.SetupGet(value => value.UserRating).Returns(rating);
         data.SetupGet(value => value.WatchedEpisodeCount).Returns(watchedEpisodes);
@@ -568,7 +570,7 @@ public sealed class ShokoHostAdapterTests
     private static Mock<IShokoSeries> Series(int id, int aniDbId, string title, int episodeCount)
     {
         var series = new Mock<IShokoSeries>();
-        series.SetupGet(value => value.ID).Returns(id);
+        series.SetupGet(value => value.LocalID).Returns(id);
         series.SetupGet(value => value.AnidbAnimeID).Returns(aniDbId);
         series.SetupGet(value => value.Title).Returns(title);
         series.SetupGet(value => value.EpisodeCounts).Returns(new EpisodeCounts { Episodes = episodeCount });
@@ -586,9 +588,9 @@ public sealed class ShokoHostAdapterTests
         EpisodeType type)
     {
         var episode = new Mock<IShokoEpisode>();
-        episode.SetupGet(value => value.ID).Returns(id);
+        episode.SetupGet(value => value.LocalID).Returns(id);
         episode.SetupGet(value => value.Series).Returns(series);
-        episode.SetupGet(value => value.SeriesID).Returns(series.ID);
+        episode.SetupGet(value => value.ShokoSeriesID).Returns(series.LocalID);
         episode.SetupGet(value => value.EpisodeNumber).Returns(number);
         episode.SetupGet(value => value.Type).Returns(type);
         return episode;
@@ -603,8 +605,8 @@ public sealed class ShokoHostAdapterTests
         int? reportedSeriesId = null)
     {
         var data = new Mock<IEpisodeUserData>();
-        data.SetupGet(value => value.SeriesID).Returns(reportedSeriesId ?? series.ID);
-        data.SetupGet(value => value.EpisodeID).Returns(episode.ID);
+        data.SetupGet(value => value.SeriesID).Returns(reportedSeriesId ?? series.LocalID);
+        data.SetupGet(value => value.EpisodeID).Returns(episode.LocalID);
         if (includeNavigation)
         {
             data.SetupGet(value => value.Series).Returns(series);
@@ -620,7 +622,7 @@ public sealed class ShokoHostAdapterTests
         params Mock<IShokoEpisode>[] episodes)
     {
         foreach (var episode in episodes)
-            metadata.Setup(service => service.GetShokoEpisodeByID(episode.Object.ID)).Returns(episode.Object);
+            metadata.Setup(service => service.GetShokoEpisodeByID(episode.Object.LocalID)).Returns(episode.Object);
     }
 
     private static IVideoUserData VideoData(
@@ -635,7 +637,7 @@ public sealed class ShokoHostAdapterTests
         params IShokoEpisode[] episodes)
     {
         var video = new Mock<IVideo>();
-        video.SetupGet(value => value.ID).Returns(videoId);
+        video.SetupGet(value => value.LocalID).Returns(videoId);
         video.SetupGet(value => value.Episodes).Returns(episodes);
         var data = new Mock<IVideoUserData>();
         data.SetupGet(value => value.VideoID).Returns(videoId);

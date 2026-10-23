@@ -28,7 +28,7 @@ The first release does not write start/finish dates, infer rewatches, update rep
 
 ## Requirements
 
-- A compatible Shoko Server 6 Dev build. AniSync Next is Dev-only and currently pins `Shoko.Abstractions` `6.0.0-alpha.83`.
+- A compatible Shoko Server 6 Dev build. AniSync Next is Dev-only and currently pins `Shoko.Abstractions` `6.0.0-alpha.111` (Daily 549). Earlier Dev releases remain in the feed for older servers.
 - A MyAnimeList API application and/or AniList developer client.
 - Legacy AniSync disabled while AniSync Next is active.
 

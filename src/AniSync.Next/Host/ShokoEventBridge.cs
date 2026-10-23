@@ -32,13 +32,13 @@ internal sealed class ShokoEventBridge(
         const EpisodeUserDataSaveReason relevant = EpisodeUserDataSaveReason.LastPlayedAt |
                                                    EpisodeUserDataSaveReason.PlaybackCount;
         if ((args.Reason & relevant) == 0) return;
-        Enqueue(args.User.Username, args.Episode.SeriesID, "watch-state");
+        Enqueue(args.User.Username, args.Episode.ShokoSeriesID, "watch-state");
     }
 
     private void OnSeriesUserDataSaved(object? sender, SeriesUserDataSavedEventArgs args)
     {
         if (args.IsImport || !args.Reason.HasFlag(SeriesUserDataSaveReason.UserRating)) return;
-        Enqueue(args.User.Username, args.Series.ID, "rating");
+        Enqueue(args.User.Username, args.Series.LocalID, "rating");
     }
 
     private void Enqueue(string username, int seriesId, string reason)
